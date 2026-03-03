@@ -1,0 +1,223 @@
+---
+title: Create new chapter
+description: Create a new chapter within an existing course
+---
+
+## Endpoint
+
+```http
+POST /api/NewChapter.php
+```
+
+Create a new chapter within an existing course. This endpoint creates a database record for the chapter, generates a markdown file, and updates the chapter record with the file path.
+
+## Authentication
+
+This endpoint requires a valid authentication token and passes a logs check. The token must be included in the request body.
+
+<Warning>
+  Invalid or expired tokens will result in a 401 Unauthorized response. This endpoint also requires passing the LogsCheck() validation.
+</Warning>
+
+## Request parameters
+
+<ParamField body="token" type="string" required>
+  Authentication token obtained from login
+</ParamField>
+
+<ParamField body="name" type="string" required>
+  The title/name of the new chapter
+</ParamField>
+
+<ParamField body="cours_id" type="string" required>
+  The ID of the course where the chapter will be created
+</ParamField>
+
+<ParamField body="md" type="string">
+  Optional initial markdown content for the chapter. If not provided, defaults to:
+  ```markdown
+  # Chapitre 1 : 
+   
+   à vous de jouer !
+  ```
+</ParamField>
+
+## Response
+
+<ResponseField name="success" type="boolean">
+  Indicates whether the chapter was created successfully
+</ResponseField>
+
+<ResponseField name="chapter_id" type="integer">
+  The ID of the newly created chapter
+</ResponseField>
+
+<ResponseField name="error" type="string">
+  Error message if the request failed
+</ResponseField>
+
+## Response codes
+
+| Code | Description |
+|------|-------------|
+| 200  | Chapter created successfully |
+| 401  | Invalid token or missing parameters |
+
+## Error messages
+
+- `"Invalid token"` - Authentication token is invalid or has expired
+- `"Missing parameters"` - One or more required parameters are missing
+
+## File structure
+
+When a chapter is created, the following file structure is generated:
+
+```text
+../md_files/
+└── {cours_id}/
+    └── {chapter_id}.md
+```
+
+The directory `../md_files/{cours_id}/` is created automatically if it doesn't exist (with permissions 0777).
+
+## Examples
+
+<Tabs>
+  <Tab title="cURL">
+    ```bash
+    curl -X POST https://yourdomain.com/api/NewChapter.php \
+      -H "Content-Type: application/x-www-form-urlencoded" \
+      -d "token=your_auth_token_here" \
+      -d "name=Introduction to Variables" \
+      -d "cours_id=123" \
+      -d "md=# Introduction to Variables%0A%0AIn this chapter, we'll learn about variables..."
+    ```
+  </Tab>
+  
+  <Tab title="PHP">
+    ```php
+    <?php
+    $url = 'https://yourdomain.com/api/NewChapter.php';
+    $markdown = <<<MD
+    # Introduction to Variables
+    
+    In this chapter, we'll learn about variables and how to use them.
+    
+    ## What is a Variable?
+    
+    A variable is a container for storing data...
+    MD;
+
+    $data = [
+        'token' => 'your_auth_token_here',
+        'name' => 'Introduction to Variables',
+        'cours_id' => '123',
+        'md' => $markdown
+    ];
+
+    $options = [
+        'http' => [
+            'header'  => "Content-type: application/x-www-form-urlencoded\r\n",
+            'method'  => 'POST',
+            'content' => http_build_query($data)
+        ]
+    ];
+
+    $context  = stream_context_create($options);
+    $result = file_get_contents($url, false, $context);
+    $response = json_decode($result, true);
+
+    if ($response['success']) {
+        echo "Chapter created with ID: " . $response['chapter_id'];
+    }
+    ?>
+    ```
+  </Tab>
+  
+  <Tab title="JavaScript">
+    ```javascript
+    const markdown = `# Introduction to Variables
+
+In this chapter, we'll learn about variables and how to use them.
+
+## What is a Variable?
+
+A variable is a container for storing data...`;
+
+    const formData = new URLSearchParams();
+    formData.append('token', 'your_auth_token_here');
+    formData.append('name', 'Introduction to Variables');
+    formData.append('cours_id', '123');
+    formData.append('md', markdown);
+
+    fetch('https://yourdomain.com/api/NewChapter.php', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+      if (data.success) {
+        console.log('Chapter created with ID:', data.chapter_id);
+      }
+    });
+    ```
+  </Tab>
+</Tabs>
+
+## Success response example
+
+```json
+{
+  "success": true,
+  "chapter_id": 789
+}
+```
+
+## Error response examples
+
+<Tabs>
+  <Tab title="Invalid token">
+    ```json
+    {
+      "success": false,
+      "error": "Invalid token"
+    }
+    ```
+  </Tab>
+  
+  <Tab title="Missing parameters">
+    ```json
+    {
+      "success": false,
+      "error": "Missing parameters"
+    }
+    ```
+  </Tab>
+</Tabs>
+
+<Note>
+  The chapter is created in two steps:
+  1. A database record is inserted into the `Chapitres` table
+  2. A markdown file is created and its path is stored in the `fichier_url` field
+</Note>
+
+## Database operations
+
+The endpoint performs the following database operations:
+
+1. **Insert chapter record:**
+   ```sql
+   INSERT INTO Chapitres (titre, cours_id) VALUES (:name, :cours_id)
+   ```
+
+2. **Update chapter with file URL:**
+   ```sql
+   UPDATE Chapitres SET fichier_url = :url WHERE id = :id
+   ```
+
+<Warning>
+  Make sure the course ID exists before creating a chapter, otherwise the foreign key constraint may fail.
+</Warning>

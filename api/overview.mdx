@@ -1,0 +1,147 @@
+---
+title: API overview
+description: Introduction to the SkillUp API for managing course content
+---
+
+The SkillUp API provides a RESTful interface for teachers to programmatically manage course content, chapters, and images. This API enables integration with external tools and automation of course creation workflows.
+
+## Who can access the API
+
+<Warning>
+The SkillUp API is exclusively available to users with the **teacher** (professeur) role. Students cannot access the API.
+</Warning>
+
+To use the API, you must:
+- Have a verified teacher account on the SkillUp platform
+- Possess a valid API key linked to your account
+- Include your API key with every request
+
+## Base URL
+
+All API endpoints are accessed via HTTPS:
+
+```
+https://skillup.great-site.net/api/
+```
+
+## Available endpoints
+
+The SkillUp API provides the following endpoints for course management:
+
+<CardGroup cols={2}>
+  <Card title="GetMd.php" icon="file-arrow-down">
+    Retrieve the markdown content for a specific chapter
+  </Card>
+  
+  <Card title="SaveMd.php" icon="floppy-disk">
+    Save or update markdown content for a chapter
+  </Card>
+  
+  <Card title="UploadImage.php" icon="image">
+    Upload an image and receive its URL path
+  </Card>
+  
+  <Card title="NewCours.php" icon="book">
+    Create a new course with metadata
+  </Card>
+  
+  <Card title="NewChapter.php" icon="file-plus">
+    Add a new chapter to an existing course
+  </Card>
+</CardGroup>
+
+## Response format
+
+All API responses are returned in JSON format with appropriate HTTP status codes.
+
+### Success response
+
+Successful requests return HTTP `200` with a JSON object:
+
+```json
+{
+  "success": true,
+  "content": "# Chapter content here..."
+}
+```
+
+### Error response
+
+Failed requests return HTTP `401` with an error message:
+
+```json
+{
+  "error": "Invalid or expired token"
+}
+```
+
+## Error handling
+
+The API implements several error handling mechanisms:
+
+<Steps>
+  <Step title="Token validation">
+    Every request validates the API token against the `KeyTable` database. Invalid tokens return a `401` error.
+  </Step>
+  
+  <Step title="Rate limiting">
+    The API tracks failed requests by IP address. More than 10 failed requests within 30 minutes will temporarily block access.
+  </Step>
+  
+  <Step title="Request logging">
+    All API requests (successful and failed) are logged in the `ApiLogs` table with timestamp and IP address.
+  </Step>
+</Steps>
+
+### Common error messages
+
+| Error Message | Cause | Solution |
+|--------------|-------|----------|
+| `Invalid or expired token` | Token not found in database | Regenerate your API key |
+| `Syntax error in request` | Missing required parameters | Check parameter names and values |
+| `Can't found this chapter` | Chapter ID doesn't exist | Verify the chapter and course IDs |
+| `Unknown categorie` | Invalid category name | Use exact category names from documentation |
+
+## Request method
+
+<Info>
+All API endpoints accept **POST** requests with `application/x-www-form-urlencoded` content type.
+</Info>
+
+## Available course categories
+
+When creating a course, use one of these exact category names:
+
+- Développement Web
+- Cybersécurité
+- Intelligence Artificielle
+- Réseaux Informatiques
+- Systèmes d'Exploitation
+- Base de Données
+- Développement Mobile
+- Programmation Orientée Objet
+- Architecture Logicielle
+- Cloud Computing
+- DevOps
+- Algorithmique
+- Informatique Théorique
+- UX/UI Design
+- Robotique
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Authentication" icon="key" href="/api/authentication">
+    Learn how to obtain and use your API key
+  </Card>
+  
+  <Card title="Endpoints" icon="code" href="/api/endpoints/get-md">
+    Explore detailed endpoint documentation
+  </Card>
+</CardGroup>
+
+## Support
+
+For API support and questions, contact:
+
+**Email:** contact.fictif@api.skillup.fr

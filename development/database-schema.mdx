@@ -1,0 +1,419 @@
+---
+title: Database schema
+description: Complete documentation of the SkillUp database structure, tables, relationships, and indexes
+---
+
+## Overview
+
+SkillUp uses a MySQL database with 11 main tables designed to support course management, user authentication, enrollment tracking, and platform analytics. The schema follows relational database best practices with foreign key constraints, indexes, and proper data types.
+
+<Info>
+The complete schema is available in `/assets/sql/skillup.sql` and uses the `utf8mb4` character set for full Unicode support.
+</Info>
+
+## Entity relationship diagram
+
+The database consists of these interconnected tables:
+
+- **Utilisateurs** - User accounts (students and professors)
+- **Cours** - Courses created by professors
+- **Chapitres** - Course chapters/lessons
+- **Categories** - Course categories for organization
+- **Inscriptions** - Student enrollments in courses
+- **Favoris** - User favorite courses
+- **Vues** - Course view tracking for analytics
+- **Sessions** - Active user sessions
+- **KeyTable** - API authentication tokens
+- **DemandeProf** - Professor role requests
+- **ApiLogs** - API usage and rate limiting logs
+
+## Table details
+
+### Utilisateurs
+
+Stores all user accounts including students and professors.
+
+```sql
+CREATE TABLE IF NOT EXISTS `Utilisateurs` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `prenom` varchar(15) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `nom` varchar(40) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `e_mail` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `mot_de_passe` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `avatar_url` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `role` enum('professeur','etudiant') CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'etudiant',
+  `date_creation` datetime DEFAULT NULL,
+  `admin` tinyint(1) NOT NULL DEFAULT '0',
+  `key_id` int DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  KEY `fk_key_id` (`key_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+```
+
+**Fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | int (PK, AUTO_INCREMENT) | Unique user identifier |
+| `prenom` | varchar(15) | First name (max 15 chars) |
+| `nom` | varchar(40) | Last name (max 40 chars) |
+| `e_mail` | varchar(255) | Email address (unique login) |
+| `mot_de_passe` | varchar(255) | Hashed password (bcrypt) |
+| `avatar_url` | varchar(255) | URL to user avatar image |
+| `role` | enum | 'professeur' or 'etudiant' |
+| `date_creation` | datetime | Account creation timestamp |
+| `admin` | tinyint(1) | Admin flag (1 = admin) |
+| `key_id` | int (FK) | Links to KeyTable for API access |
+
+<Note>
+Passwords are hashed using PHP's `password_hash()` function with `PASSWORD_DEFAULT` algorithm (bcrypt).
+</Note>
+
+### Cours
+
+Contains all courses available on the platform.
+
+```sql
+CREATE TABLE IF NOT EXISTS `Cours` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `nom` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `illustration_url` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `description` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci,
+  `categorie_id` int DEFAULT NULL,
+  `prof_id` int NOT NULL,
+  `date_creation` datetime DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_cours_appartient_categorie` (`categorie_id`),
+  KEY `idx_cours_cree_par_prof` (`prof_id`),
+  CONSTRAINT `cle_etrangere_cours_cree_par_prof` FOREIGN KEY (`prof_id`) REFERENCES `Utilisateurs` (`id`) ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+```
+
+**Fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | int (PK, AUTO_INCREMENT) | Unique course identifier |
+| `nom` | varchar(255) | Course name/title |
+| `illustration_url` | varchar(255) | Course cover image URL |
+| `description` | text | Course description (unlimited length) |
+| `categorie_id` | int (FK) | Links to Categories table |
+| `prof_id` | int (FK, NOT NULL) | Professor who created the course |
+| `date_creation` | datetime | Course creation timestamp |
+
+**Relationships:**
+- One-to-many with `Chapitres` (a course has many chapters)
+- Many-to-one with `Utilisateurs` (created by one professor)
+- Many-to-one with `Categories` (belongs to one category)
+
+<Warning>
+Deleting a professor (`prof_id`) will CASCADE delete all their courses due to the foreign key constraint.
+</Warning>
+
+### Chapitres
+
+Stores individual chapters/lessons within courses.
+
+```sql
+CREATE TABLE IF NOT EXISTS `Chapitres` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `titre` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `fichier_url` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `cours_id` int DEFAULT NULL,
+  `date_creation` datetime DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_chapitres_contenu_dans_cours` (`cours_id`),
+  CONSTRAINT `cle_etrangere_chapitres_contenu_dans_cours` FOREIGN KEY (`cours_id`) REFERENCES `Cours` (`id`) ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+```
+
+**Fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | int (PK, AUTO_INCREMENT) | Unique chapter identifier |
+| `titre` | varchar(50) | Chapter title (max 50 chars) |
+| `fichier_url` | varchar(255) | Path to markdown content file |
+| `cours_id` | int (FK) | Parent course ID |
+| `date_creation` | datetime | Chapter creation timestamp |
+
+**Example chapter paths:**
+- `../md_files/11/27.md`
+- `../md_files/37/132.md`
+
+### Categories
+
+Organizes courses into subject areas.
+
+```sql
+CREATE TABLE IF NOT EXISTS `Categories` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `nom` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `description` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci,
+  `date_creation` datetime DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+```
+
+**Sample categories:**
+- Développement Web (id: 1)
+- Cybersécurité (id: 2)
+- Intelligence Artificielle (id: 3)
+- Réseaux Informatiques (id: 4)
+- Base de Données (id: 6)
+- Développement Mobile (id: 7)
+
+### Inscriptions
+
+Tracks student enrollments in courses.
+
+```sql
+CREATE TABLE IF NOT EXISTS `Inscriptions` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `etudiant_id` int DEFAULT NULL,
+  `cours_id` int NOT NULL,
+  `date_inscription` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_inscriptions_etudiant` (`etudiant_id`),
+  KEY `idx_inscriptions_concerne_cours` (`cours_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+```
+
+**Fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | int (PK, AUTO_INCREMENT) | Unique enrollment identifier |
+| `etudiant_id` | int (FK) | Student user ID |
+| `cours_id` | int (FK, NOT NULL) | Course ID |
+| `date_inscription` | timestamp | When student enrolled |
+
+### Favoris
+
+Allows users to bookmark favorite courses.
+
+```sql
+CREATE TABLE IF NOT EXISTS `Favoris` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `utilisateur_id` int NOT NULL,
+  `cours_id` int NOT NULL,
+  `date_ajout` datetime DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `unique_favori` (`utilisateur_id`,`cours_id`),
+  KEY `idx_favoris_utilisateur` (`utilisateur_id`),
+  KEY `idx_favoris_cours` (`cours_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+```
+
+<Info>
+The `UNIQUE KEY` constraint prevents users from favoriting the same course multiple times.
+</Info>
+
+### Sessions
+
+Manages active user sessions with token-based authentication.
+
+```sql
+CREATE TABLE IF NOT EXISTS `sessions` (
+  `id` bigint UNSIGNED NOT NULL AUTO_INCREMENT,
+  `user_id` int NOT NULL,
+  `token` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `expires_at` timestamp NOT NULL DEFAULT '0000-00-00 00:00:00',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `token` (`token`),
+  KEY `user_id` (`user_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+```
+
+**Fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | bigint (PK, AUTO_INCREMENT) | Unique session identifier |
+| `user_id` | int (FK) | User who owns the session |
+| `token` | varchar(255) | Hashed session token (unique) |
+| `created_at` | timestamp | Session creation time |
+| `expires_at` | timestamp | When session expires (24h default) |
+
+**Session lifecycle:**
+1. Created on login with hashed token
+2. Validated on each request via `IsConnected()`
+3. Expired sessions auto-deleted on next check
+4. Destroyed on logout
+
+### KeyTable
+
+Stores API authentication tokens for professors.
+
+```sql
+CREATE TABLE IF NOT EXISTS `KeyTable` (
+  `key_id` int NOT NULL AUTO_INCREMENT,
+  `date_creation` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `actif` tinyint(1) NOT NULL DEFAULT '1',
+  `token` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  PRIMARY KEY (`key_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+```
+
+**Purpose:**
+- Provides API access tokens for course creation
+- Linked to professor accounts via `Utilisateurs.key_id`
+- Tokens generated with `bin2hex(random_bytes(32))`
+
+### Vues
+
+Tracks course views for analytics.
+
+```sql
+CREATE TABLE IF NOT EXISTS `Vues` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `utilisateur_id` int NOT NULL,
+  `cours_id` int NOT NULL,
+  `date_vue` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `ip_address` varchar(45) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_vues_utilisateur` (`utilisateur_id`),
+  KEY `idx_vues_cours` (`cours_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+```
+
+**Analytics uses:**
+- Track popular courses
+- Measure user engagement
+- Calculate trending courses
+
+### ApiLogs
+
+Logs all API requests for rate limiting and monitoring.
+
+```sql
+CREATE TABLE IF NOT EXISTS `ApiLogs` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `ip` varchar(45) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `succes` tinyint(1) NOT NULL DEFAULT '0',
+  `date_heure` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+```
+
+**Rate limiting logic:**
+```php
+// From /include/secureCheck.php:4-25
+function LogsCheck() {
+    $ip = GetIP();
+    if (!empty($ip)) {
+        $db = connectDB();
+        $dateH_check = (new DateTime('-30 minutes'))->format('Y-m-d H:i:s');
+        $sql = 'SELECT COUNT(ApiLogs.id) AS nb_denied FROM ApiLogs 
+                WHERE ApiLogs.date_heure > :dateheure 
+                AND ApiLogs.succes = FALSE 
+                AND ip = :ip';
+        $request = $db->prepare($sql);
+        $request->bindParam(':dateheure', $dateH_check);
+        $request->bindParam(':ip', $ip);
+        $request->execute();
+        $result = $request->fetch(PDO::FETCH_ASSOC);
+        if ($result['nb_denied'] < 10) {
+            return true; // Allow request
+        } else {
+            return false; // Block - too many failed requests
+        }
+    }
+    return false;
+}
+```
+
+<Warning>
+IPs with 10+ failed requests in 30 minutes are automatically blocked.
+</Warning>
+
+### DemandeProf
+
+Handles requests from students to become professors.
+
+```sql
+CREATE TABLE IF NOT EXISTS `DemandeProf` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `id_utilisateur` int NOT NULL,
+  `presentation` varchar(250) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  KEY `id_utilisateur` (`id_utilisateur`),
+  CONSTRAINT `demandeprof_ibfk_1` FOREIGN KEY (`id_utilisateur`) REFERENCES `Utilisateurs` (`id`) ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+```
+
+## Indexes and optimization
+
+The schema includes strategic indexes for query performance:
+
+<Tabs>
+  <Tab title="Foreign key indexes">
+    - `idx_cours_appartient_categorie` on `Cours.categorie_id`
+    - `idx_cours_cree_par_prof` on `Cours.prof_id`
+    - `idx_chapitres_contenu_dans_cours` on `Chapitres.cours_id`
+    - `idx_inscriptions_etudiant` on `Inscriptions.etudiant_id`
+    - `idx_inscriptions_concerne_cours` on `Inscriptions.cours_id`
+  </Tab>
+  
+  <Tab title="Unique constraints">
+    - `sessions.token` - Ensures session tokens are unique
+    - `Favoris(utilisateur_id, cours_id)` - Prevents duplicate favorites
+  </Tab>
+  
+  <Tab title="Analytics indexes">
+    - `idx_vues_utilisateur` on `Vues.utilisateur_id`
+    - `idx_vues_cours` on `Vues.cours_id`
+    - `idx_favoris_utilisateur` on `Favoris.utilisateur_id`
+    - `idx_favoris_cours` on `Favoris.cours_id`
+  </Tab>
+</Tabs>
+
+## Relationships summary
+
+```
+Utilisateurs (1) ──── (N) Cours [prof_id]
+    │
+    ├──── (N) Inscriptions [etudiant_id]
+    │
+    ├──── (N) Favoris [utilisateur_id]
+    │
+    ├──── (N) Vues [utilisateur_id]
+    │
+    ├──── (N) Sessions [user_id]
+    │
+    └──── (1) KeyTable [key_id]
+
+Cours (1) ──── (N) Chapitres [cours_id]
+  │
+  ├──── (N) Inscriptions [cours_id]
+  │
+  ├──── (N) Favoris [cours_id]
+  │
+  ├──── (N) Vues [cours_id]
+  │
+  └──── (1) Categories [categorie_id]
+```
+
+## Data integrity
+
+The schema enforces data integrity through:
+
+<Accordion title="Foreign key constraints">
+- `ON DELETE CASCADE` - Deleting a course removes all its chapters
+- `ON UPDATE CASCADE` - ID changes propagate to related tables
+- `FOREIGN KEY` constraints maintain referential integrity
+</Accordion>
+
+<Accordion title="NOT NULL constraints">
+- `Cours.prof_id` - Every course must have a creator
+- `Inscriptions.cours_id` - Enrollments must reference a course
+- `Sessions.user_id` and `Sessions.token` - Required for authentication
+</Accordion>
+
+<Accordion title="Default values">
+- `date_creation` fields default to `CURRENT_TIMESTAMP`
+- `Utilisateurs.role` defaults to 'etudiant'
+- `Utilisateurs.admin` defaults to 0 (false)
+- `KeyTable.actif` defaults to 1 (true)
+</Accordion>

@@ -1,0 +1,437 @@
+---
+title: Admin dashboard
+description: Platform administration, user management, and professor approval system
+---
+
+## Overview
+
+The admin dashboard provides platform administrators with tools to manage users, approve professor applications, and monitor platform statistics. Access is restricted to users with admin privileges.
+
+## Access control
+
+Only authenticated users with the `admin` flag set to `true` can access the admin dashboard.
+
+### Admin authentication check
+
+From `pages/admin.php:6-20`:
+
+```php
+if(!IsConnected()){
+    header('Location: connection.php');
+    exit();
+}
+
+$sql = 'SELECT Utilisateurs.id, Utilisateurs.prenom, Utilisateurs.admin 
+        FROM sessions 
+        INNER JOIN Utilisateurs ON Utilisateurs.id = sessions.user_id 
+        WHERE sessions.token = :token';
+$request = $db->prepare($sql);
+$request->bindParam(':token', $_COOKIE['user_token']);
+$request->execute();
+$result = $request->fetch(PDO::FETCH_ASSOC);
+
+if(!isset($result['admin']) || $result['admin'] == false){
+    header('Location: ../index.php');
+    exit();
+}
+```
+
+<Warning>
+  Users without admin privileges are immediately redirected to the homepage when attempting to access admin pages.
+</Warning>
+
+## Platform statistics
+
+The dashboard displays key metrics about platform usage and growth.
+
+### Total users count
+
+From `pages/admin.php:63-70`:
+
+```php
+function getTotalUsers() {
+    global $db;
+    $sql = "SELECT COUNT(*) as total FROM Utilisateurs";
+    $request = $db->prepare($sql);
+    $request->execute();
+    $result = $request->fetch(PDO::FETCH_ASSOC);
+    return $result['total'];
+}
+```
+
+### New users in time period
+
+From `pages/admin.php:72-80`:
+
+```php
+function getNewUsers($days) {
+    global $db;
+    $sql = "SELECT COUNT(*) as total FROM Utilisateurs 
+            WHERE date_creation >= NOW() - INTERVAL :days DAY";
+    $request = $db->prepare($sql);
+    $request->bindParam(':days', $days, PDO::PARAM_INT);
+    $request->execute();
+    $result = $request->fetch(PDO::FETCH_ASSOC);
+    return $result['total'];
+}
+```
+
+### New courses in time period
+
+From `pages/admin.php:82-90`:
+
+```php
+function getNewCourses($days) {
+    global $db;
+    $sql = "SELECT COUNT(*) as total FROM Cours 
+            WHERE date_creation >= NOW() - INTERVAL :days DAY";
+    $request = $db->prepare($sql);
+    $request->bindParam(':days', $days, PDO::PARAM_INT);
+    $request->execute();
+    $result = $request->fetch(PDO::FETCH_ASSOC);
+    return $result['total'];
+}
+```
+
+### Statistics display
+
+The dashboard shows three main statistics cards:
+
+```html
+<div id="stats">
+    <div class="stats-header">
+        <div class="stat-box">
+            <div class="stat-header">
+                <!-- Users icon -->
+                <h2>Utilisateurs totaux</h2>
+            </div>
+            <div class="value-box">
+                <div><?php echo ($users); ?></div>
+            </div>
+        </div>
+
+        <div class="stat-box">
+            <div class="stat-header">
+                <!-- User plus icon -->
+                <h2>Nouveaux utilisateurs (7j)</h2>
+            </div>
+            <div class="value-box">
+                <div><?php echo ($newusers); ?></div>
+            </div>
+        </div>
+
+        <div class="stat-box">
+            <div class="stat-header">
+                <!-- Book icon -->
+                <h2>Nouveaux cours (7j)</h2>
+            </div>
+            <div class="value-box">
+                <div><?php echo ($newcourses); ?></div>
+            </div>
+        </div>
+    </div>
+</div>
+```
+
+<Info>
+  Statistics are calculated on page load and show real-time data from the database.
+</Info>
+
+## Professor application management
+
+Users can request to become professors, and admins review and approve these requests.
+
+### Fetch pending requests
+
+From `pages/admin.php:21-24`:
+
+```php
+$sql_prof_requests = "SELECT DemandeProf.id, DemandeProf.id_utilisateur, DemandeProf.presentation 
+                      FROM DemandeProf";
+$request = $db->prepare($sql_prof_requests);
+$request->execute();
+$profRequests = $request->fetchAll(PDO::FETCH_ASSOC);
+```
+
+### Approve professor request
+
+The approval process upgrades the user role and generates an API token from `pages/admin.php:36-61`:
+
+```php
+function AddTeacher($user){
+    global $db, $result;
+    
+    // Update user role to professor
+    $sql = "UPDATE Utilisateurs SET Utilisateurs.role = 'professeur' WHERE id = :id;";
+    $request = $db->prepare($sql);
+    $request->bindParam(':id', $user);
+    $request->execute();
+    
+    DeleteRequest($user);
+
+    // Generate API token
+    $token = generateToken();
+    $currentDate = date('Y-m-d H:i:s');
+    $sql = "INSERT INTO KeyTable (actif, token, date_creation) 
+            VALUES (true, :token, :date)";
+    $request = $db->prepare($sql);
+    $request->bindParam(':token', $token);
+    $request->bindParam(':date', $currentDate);
+    $request->execute();
+
+    $keyId = $db->lastInsertId();
+
+    // Link API key to user
+    $sql = 'UPDATE Utilisateurs SET Utilisateurs.key_id = :kid WHERE Utilisateurs.id = :id';
+    $request = $db->prepare($sql);
+    $request->bindParam(':kid', $keyId);
+    $request->bindParam(':id', $_POST['user']);
+    $request->execute();
+
+    header("Location: " . $_SERVER['PHP_SELF']);
+}
+```
+
+<Steps>
+  <Step title="Update role">
+    User's role field is changed from 'etudiant' to 'professeur' in the database.
+  </Step>
+  
+  <Step title="Generate API token">
+    A unique token is generated for the professor to access API features.
+  </Step>
+  
+  <Step title="Store token">
+    The token is saved in the KeyTable with active status.
+  </Step>
+  
+  <Step title="Link to user">
+    The key_id is associated with the user's account.
+  </Step>
+  
+  <Step title="Delete request">
+    The professor application is removed from DemandeProf table.
+  </Step>
+</Steps>
+
+### Reject professor request
+
+From `pages/admin.php:29-35`:
+
+```php
+function DeleteRequest($user){
+    global $db;
+    $sql = "DELETE FROM DemandeProf WHERE id_utilisateur = :id;";
+    $request = $db->prepare($sql);
+    $request->bindParam(':id', $user);
+    $request->execute();
+}
+```
+
+### Request handling
+
+From `pages/admin.php:92-100`:
+
+```php
+if ($_SERVER["REQUEST_METHOD"] == "POST") {
+    if (isset($_POST['user']) && isset($_POST['action'])) {
+        if ($_POST['action'] == "1") {
+            AddTeacher($_POST['user']);
+        } else {
+            DeleteRequest($_POST['user']);
+        }
+    }
+}
+```
+
+## Professor requests table
+
+Pending requests are displayed in a table with action buttons.
+
+### Display requests
+
+From `pages/admin.php:147-182`:
+
+```php
+if(isset($profRequests[0]["id"])){
+    echo "<h2>Demandes en attente</h2>";
+    echo "<table>";
+    echo "<thead>";
+    echo "<tr>";
+    echo "<td>ID</td>";
+    echo "<td>CV</td>";
+    echo "<td>Actions</td>";
+    echo "</tr>";
+    echo "</thead>";
+    echo "<tbody>";
+    foreach ($profRequests as $request) {
+        echo "<tr>";
+        echo "<td>DEM-" . htmlspecialchars($request['id']) . "</td>";
+        echo "<td>" . htmlspecialchars($request['presentation']) . "</td>";
+        echo '<td class="actions-cell">
+            <form method="POST">
+                <input type="hidden" value="' . htmlspecialchars($request['id_utilisateur']) . '" name="user">
+                <button class="accept-btn" name="action" value="1" type="submit">
+                    <!-- Check icon -->
+                    Accepter
+                </button>
+                <button class="refuse-btn" name="action" value="0" type="submit">
+                    <!-- X icon -->
+                    Refuser
+                </button>
+            </form>
+        </td>';
+        echo "</tr>";
+    }
+    echo "</tbody>";
+    echo "</table>";
+}else{
+    echo "<p>Aucune demande en cours</p>";
+}
+```
+
+### Request table structure
+
+<Tabs>
+  <Tab title="With pending requests">
+    | Column | Content |
+    |--------|--------|
+    | ID | Request ID prefixed with "DEM-" |
+    | CV | The presentation/CV text submitted by the applicant |
+    | Actions | Accept and Refuse buttons |
+  </Tab>
+  
+  <Tab title="No pending requests">
+    Displays message: "Aucune demande en cours"
+  </Tab>
+</Tabs>
+
+## User interface
+
+The admin dashboard has a clean, functional design focused on efficiency.
+
+### Navigation
+
+```html
+<button onclick="location.href='../index.php';">Retour à l'accueil</button>
+<h1>Bienvenue <?php echo htmlspecialchars($result['prenom'])?></h1>
+```
+
+### Action buttons
+
+Two distinct button styles for different actions:
+
+```html
+<button class="accept-btn" name="action" value="1" type="submit">
+    <svg><!-- Check circle icon --></svg>
+    Accepter
+</button>
+<button class="refuse-btn" name="action" value="0" type="submit">
+    <svg><!-- X circle icon --></svg>
+    Refuser
+</button>
+```
+
+<Note>
+  Action buttons use different colors (accept-btn in green, refuse-btn in red) to prevent accidental clicks.
+</Note>
+
+## Database schema
+
+### DemandeProf table
+
+```sql
+CREATE TABLE DemandeProf (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    id_utilisateur INT NOT NULL,
+    presentation TEXT NOT NULL,
+    date_demande DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (id_utilisateur) REFERENCES Utilisateurs(id) ON DELETE CASCADE
+);
+```
+
+### KeyTable
+
+```sql
+CREATE TABLE KeyTable (
+    key_id INT PRIMARY KEY AUTO_INCREMENT,
+    actif BOOLEAN DEFAULT TRUE,
+    token VARCHAR(255) UNIQUE NOT NULL,
+    date_creation DATETIME NOT NULL
+);
+```
+
+### Utilisateurs admin fields
+
+```sql
+ALTER TABLE Utilisateurs ADD COLUMN admin BOOLEAN DEFAULT FALSE;
+ALTER TABLE Utilisateurs ADD COLUMN role VARCHAR(20) DEFAULT 'etudiant';
+ALTER TABLE Utilisateurs ADD COLUMN key_id INT;
+ALTER TABLE Utilisateurs ADD FOREIGN KEY (key_id) REFERENCES KeyTable(key_id);
+```
+
+## Security considerations
+
+<Accordion title="Authorization checks">
+  - Every admin page starts with `IsConnected()` check
+  - Admin flag is verified from database, not trusted from cookies
+  - Unauthorized users are redirected before any operations
+  - Uses prepared statements to prevent SQL injection
+</Accordion>
+
+<Accordion title="CSRF protection">
+  While the current implementation uses POST forms, consider adding:
+  - CSRF tokens in forms
+  - Token validation before processing actions
+  - Session-based token generation
+</Accordion>
+
+<Accordion title="Input validation">
+  - User IDs are validated as integers
+  - Action values are checked ("1" for accept, "0" for reject)
+  - Database constraints prevent invalid data
+</Accordion>
+
+## Admin workflow
+
+<Steps>
+  <Step title="Login as admin">
+    Admin must authenticate with an account that has admin flag set to true.
+  </Step>
+  
+  <Step title="View dashboard">
+    See platform statistics: total users, new users (7 days), new courses (7 days).
+  </Step>
+  
+  <Step title="Review applications">
+    Check pending professor applications in the requests table.
+  </Step>
+  
+  <Step title="Evaluate CV">
+    Read the presentation text submitted by the applicant.
+  </Step>
+  
+  <Step title="Make decision">
+    Click "Accepter" to approve or "Refuser" to reject the application.
+  </Step>
+  
+  <Step title="Confirmation">
+    Page refreshes and the processed request is removed from the list.
+  </Step>
+</Steps>
+
+<Info>
+  When a professor is approved, they gain access to the course creation dashboard and receive an API token for advanced features.
+</Info>
+
+## Best practices for admins
+
+- Review professor applications carefully before approval
+- Monitor new user and course statistics regularly
+- Check for suspicious activity patterns
+- Maintain a log of approved/rejected applications (future enhancement)
+- Only grant admin access to trusted team members
+
+<Warning>
+  Admin actions are permanent. Rejecting a professor request deletes the application permanently. Users would need to resubmit if rejected by mistake.
+</Warning>

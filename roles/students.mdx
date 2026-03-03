@@ -1,0 +1,204 @@
+---
+title: Student role
+description: Learn about student capabilities and features in the SkillUp platform
+---
+
+The student role is the default role for all users who register on the SkillUp platform. Students can browse courses, enroll in learning programs, and track their progress through course content.
+
+## Core capabilities
+
+Students have access to a comprehensive set of features designed to facilitate their learning journey:
+
+<CardGroup cols={2}>
+  <Card title="Browse courses" icon="book-open">
+    Search and filter through all available courses across multiple categories
+  </Card>
+  <Card title="Enroll in courses" icon="user-plus">
+    Register for courses that interest you with one click
+  </Card>
+  <Card title="View content" icon="eye">
+    Access course chapters and markdown-based learning materials
+  </Card>
+  <Card title="Track progress" icon="chart-line">
+    Monitor your learning progress through each course
+  </Card>
+</CardGroup>
+
+## Browsing and searching courses
+
+Students can discover courses through the formations page (`pages/formations.php:16-51`). The platform provides:
+
+- **Search functionality**: Find courses by name or description
+- **Category filters**: Filter courses by categories like Web Development, Cybersecurity, AI, and more
+- **"My courses" view**: Access enrolled courses quickly by selecting category ID 16
+
+```php
+// Example: Filtering courses by category
+if (!empty($categorie)) {
+    $requete .= " AND c.categorie_id = :categorie";
+    $param[':categorie'] = $categorie;
+}
+
+// Searching courses by name or description
+if (!empty($recherche)) {
+    $requete .= " AND (c.nom LIKE :recherche_nom OR c.description LIKE :recherche_desc)";
+    $param[':recherche_nom'] = "%" . $recherche . "%";
+    $param[':recherche_desc'] = "%" . $recherche . "%";
+}
+```
+
+<Note>
+  Students must be logged in to view their enrolled courses. The "My courses" filter (category 16) redirects unauthenticated users to the login page.
+</Note>
+
+## Enrolling in courses
+
+The enrollment process is handled through the course detail page (`pages/detail.php:118-142`):
+
+1. Students click on a course to view its details
+2. If not already enrolled, they see an "S'inscrire au cours" button
+3. Upon clicking, an entry is created in the `Inscriptions` table
+4. A view record is automatically added to track engagement
+
+```php
+// Enrollment process from detail.php
+if (isset($_POST['inscription']) && IsConnected()) {
+    $user = /* get user from session */;
+    
+    if ($user && !$is_inscrit) {
+        // Add enrollment
+        $stmt_inscription = $db->prepare(
+            "INSERT INTO Inscriptions (etudiant_id, cours_id) 
+             VALUES (:user_id, :cours_id)"
+        );
+        $stmt_inscription->execute();
+    }
+}
+```
+
+<Warning>
+  Students must be authenticated to enroll in courses. Unauthenticated users will see a "Se connecter pour s'inscrire" link instead.
+</Warning>
+
+## Viewing course content
+
+Once enrolled, students can access course content through the course viewer (`pages/course_viewer.php:1-376`):
+
+### Features
+
+- **Chapter navigation**: Browse through course chapters in a sidebar
+- **Markdown rendering**: Course content is rendered from markdown files using marked.js
+- **Progress tracking**: Visual progress bar shows completion percentage
+- **Sequential navigation**: Previous/Next buttons for easy chapter navigation
+
+### Access control
+
+The course viewer implements strict access control (`pages/course_viewer.php:37-47`):
+
+```php
+// Verify user is enrolled in the course
+$stmt_inscrit = $db->prepare(
+    "SELECT id FROM Inscriptions 
+     WHERE etudiant_id = :user_id AND cours_id = :cours_id"
+);
+
+if ($stmt_inscrit->rowCount() === 0) {
+    // Redirect to course detail page if not enrolled
+    header("Location: detail.php?id=" . $id_cours);
+    exit();
+}
+```
+
+<Accordion title="How chapter content is loaded">
+  Course chapters are stored as markdown files in the `md_files/` directory. When a student views a chapter:
+  
+  1. The system retrieves the chapter's `fichier_url` from the database
+  2. The markdown file is read from disk (`pages/course_viewer.php:99-104`)
+  3. Content is rendered client-side using marked.js
+  4. The rendered HTML is displayed in the chapter content area
+</Accordion>
+
+## Managing profile and favorites
+
+Students can customize their profile through the profile page (`pages/profile.php:1-237`):
+
+### Profile management
+
+<CardGroup cols={2}>
+  <Card title="Update personal info" icon="user-pen">
+    Change name and firstname through the profile form
+  </Card>
+  <Card title="Avatar generation" icon="image">
+    Generate AI-powered avatars using custom prompts
+  </Card>
+  <Card title="Password reset" icon="lock">
+    Update account password securely
+  </Card>
+  <Card title="Account deletion" icon="trash">
+    Permanently delete your account and all associated data
+  </Card>
+</CardGroup>
+
+### Becoming a teacher
+
+Students can request to become teachers through their profile (`pages/profile.php:84-92`):
+
+```php
+function AddTeacherRequest($text) {
+    global $db, $result;
+    $sql = "INSERT INTO DemandeProf (id_utilisateur, presentation) 
+            VALUES (:id, :text)";
+    $request = $db->prepare($sql);
+    $request->bindParam(':id', $result['id']);
+    $request->bindParam(':text', $text);
+    $request->execute();
+}
+```
+
+<Note>
+  Students can only submit one teacher request at a time. The system checks if a request already exists before allowing submission (`pages/profile.php:71-83`).
+</Note>
+
+## Tracking views and engagement
+
+The platform automatically tracks student engagement (`pages/detail.php:50-95`):
+
+- **Course views**: Recorded when students visit course detail pages
+- **Unique views**: Tracked by user ID for authenticated users, IP address for guests
+- **Duplicate prevention**: System checks existing views before creating new records
+
+## Student session management
+
+Student authentication is managed through session cookies (`include/sessionManager.php:4-35`):
+
+```php
+function IsConnected(): bool {
+    // Check for user_token cookie
+    if (!isset($_COOKIE['user_token'])) {
+        return false;
+    }
+    
+    // Validate session hasn't expired
+    $expires_at = new DateTime($result['expires_at']);
+    if ($expires_at > $now) {
+        return true;
+    }
+    
+    return false;
+}
+```
+
+<Warning>
+  Sessions are automatically cleaned up on each authentication check. Expired sessions are removed from the database to maintain system performance.
+</Warning>
+
+## Related resources
+
+<CardGroup cols={2}>
+  <Card title="Teacher role" icon="chalkboard-user" href="/roles/teachers">
+    Learn how to create and manage courses as a teacher
+  </Card>
+  <Card title="Administrator role" icon="user-shield" href="/roles/administrators">
+    Understand administrative capabilities and responsibilities
+  </Card>
+</CardGroup>

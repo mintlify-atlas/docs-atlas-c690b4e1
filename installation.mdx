@@ -1,0 +1,412 @@
+---
+title: Installation guide
+description: Complete installation and setup instructions for deploying SkillUp
+---
+
+## Prerequisites
+
+Before installing SkillUp, ensure your server meets these requirements:
+
+<CardGroup cols={2}>
+  <Card title="PHP 8.0+" icon="php">
+    Recommended version 8.0 or higher with PDO extension
+  </Card>
+  <Card title="MySQL 8.0+" icon="database">
+    MySQL or MariaDB with utf8mb4 support
+  </Card>
+  <Card title="Web server" icon="server">
+    Apache or Nginx with PHP support
+  </Card>
+  <Card title="Git" icon="git">
+    For cloning the repository
+  </Card>
+</CardGroup>
+
+### PHP extensions required
+
+Verify these PHP extensions are enabled:
+
+- `pdo_mysql` - MySQL database connectivity
+- `mbstring` - Multibyte string handling
+- `session` - Session management
+- `json` - JSON encoding/decoding
+- `fileinfo` - File type detection
+
+## Installation
+
+Follow these steps to install SkillUp on your server:
+
+<Steps>
+  <Step title="Clone the repository">
+    Download the SkillUp source code from GitHub:
+    
+    ```bash
+    git clone https://github.com/jossweb/SkillUp.git
+    cd SkillUp
+    ```
+  </Step>
+  
+  <Step title="Import the database">
+    Create a new MySQL database and import the schema:
+    
+    ```bash
+    mysql -u root -p
+    ```
+    
+    ```sql
+    CREATE DATABASE skillup CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+    USE skillup;
+    SOURCE assets/sql/skillup.sql;
+    EXIT;
+    ```
+    
+    The SQL file creates all necessary tables including:
+    - User accounts and sessions
+    - Courses and chapters
+    - Categories and enrollments
+    - API keys and logs
+  </Step>
+  
+  <Step title="Configure database connection">
+    Edit the configuration file with your database credentials:
+    
+    ```php include/config.php
+    <?php
+    // Site configuration
+    define('SITE_NAME', 'SkillUp');
+    
+    // Path configuration
+    define('ASSETS_PATH', 'assets');
+    define('IMG_PATH', ASSETS_PATH . '/images');
+    define('CSS_PATH', ASSETS_PATH . '/css');
+    define('JS_PATH', ASSETS_PATH . '/js');
+    
+    // Database configuration
+    define('DB_HOST', 'localhost');     // Database host
+    define('DB_PORT', 3306);            // Port (3306 default for MySQL)
+    define('DB_USER', 'root');          // Database username
+    define('DB_PASS', '');              // Database password
+    define('DB_NAME', 'skillup');       // Database name
+    
+    define('DEBUG', true);              // Display errors (set false in production)
+    ?>
+    ```
+    
+    <Warning>
+      Set `DEBUG` to `false` in production to prevent error messages from exposing sensitive information.
+    </Warning>
+  </Step>
+  
+  <Step title="Test database connection">
+    Verify your database configuration is correct:
+    
+    ```bash
+    php include/test.php
+    ```
+    
+    Or visit `http://yourserver/include/test.php` in your browser. You should see a success message if the connection is properly configured.
+  </Step>
+  
+  <Step title="Set file permissions">
+    Ensure the web server has write access to the Markdown storage directory:
+    
+    ```bash
+    mkdir -p md_files
+    chmod 755 md_files
+    chown www-data:www-data md_files
+    ```
+    
+    This directory stores all course chapter content as Markdown files.
+  </Step>
+  
+  <Step title="Configure web server">
+    Point your web server's document root to the SkillUp directory.
+    
+    **Apache (.htaccess example):**
+    ```apache
+    <IfModule mod_rewrite.c>
+        RewriteEngine On
+        RewriteBase /
+        
+        # Prevent access to sensitive files
+        RewriteRule ^include/ - [F,L]
+        RewriteRule ^md_files/ - [F,L]
+    </IfModule>
+    ```
+    
+    **Nginx configuration example:**
+    ```nginx
+    server {
+        listen 80;
+        server_name your-domain.com;
+        root /path/to/SkillUp;
+        index index.php;
+        
+        # Deny access to sensitive directories
+        location ~ ^/(include|md_files)/ {
+            deny all;
+            return 403;
+        }
+        
+        location ~ \.php$ {
+            fastcgi_pass unix:/var/run/php/php8.0-fpm.sock;
+            fastcgi_index index.php;
+            include fastcgi_params;
+            fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+        }
+        
+        location / {
+            try_files $uri $uri/ /index.php?$query_string;
+        }
+    }
+    ```
+  </Step>
+  
+  <Step title="Access the platform">
+    Open your browser and navigate to your server's URL. You should see the SkillUp homepage.
+    
+    Create your first account by clicking "Se connecter" (Sign in) and then registering a new account.
+  </Step>
+</Steps>
+
+## Database configuration details
+
+The connection is established using PDO with the following settings:
+
+```php include/connectdb.php
+function connectDB() {
+    try {
+        $dsn = "mysql:host=" . DB_HOST . ";port=" . DB_PORT . ";dbname=" . DB_NAME . ";charset=utf8mb4";
+        $options = [
+            PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+            PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+            PDO::ATTR_EMULATE_PREPARES => false
+        ];
+        
+        return new PDO($dsn, DB_USER, DB_PASS, $options);
+    } catch (PDOException $e) {
+        if (DEBUG) {
+            afficheErreur($e);
+        } else {
+            echo "<p>Une erreur est survenue lors de la connexion aux données.</p>";
+        }
+        exit;
+    }
+}
+```
+
+Key PDO options:
+- `ERRMODE_EXCEPTION`: Throws exceptions on database errors
+- `FETCH_ASSOC`: Returns associative arrays by default
+- `EMULATE_PREPARES = false`: Uses native prepared statements for security
+
+## Post-installation setup
+
+### Create the first professor account
+
+<Steps>
+  <Step title="Register as a student">
+    Create a regular user account through the registration page
+  </Step>
+  
+  <Step title="Request professor role">
+    Navigate to your profile and click "Devenir formateur" (Become instructor) to request professor privileges
+  </Step>
+  
+  <Step title="Approve request (admin)">
+    Access the admin panel to approve professor requests. The first user can be manually upgraded in the database:
+    
+    ```sql
+    UPDATE Utilisateurs SET role = 'professeur' WHERE id = 1;
+    ```
+  </Step>
+  
+  <Step title="Generate API key">
+    Once approved, access the API dashboard at `/api/index.php` to generate your API key for programmatic access
+  </Step>
+</Steps>
+
+### Create your first course
+
+<Steps>
+  <Step title="Access dashboard">
+    Log in as a professor and navigate to the dashboard
+  </Step>
+  
+  <Step title="Create course">
+    Click the "Create Course" button to initialize a new course with default values
+  </Step>
+  
+  <Step title="Configure course">
+    Update the course name, description, and select a category from the 15 available options
+  </Step>
+  
+  <Step title="Add chapters">
+    Use the chapter management interface to add content. Each chapter supports full Markdown syntax
+  </Step>
+  
+  <Step title="Publish">
+    Save your changes and the course will be immediately visible to students
+  </Step>
+</Steps>
+
+## Security hardening
+
+### Production environment checklist
+
+<CardGroup cols={2}>
+  <Card title="Disable debug mode" icon="bug-slash">
+    Set `DEBUG = false` in `include/config.php`
+  </Card>
+  
+  <Card title="Protect directories" icon="lock">
+    Block direct access to `/include` and `/md_files` via web server config
+  </Card>
+  
+  <Card title="Use HTTPS" icon="shield">
+    Install SSL/TLS certificate and enforce HTTPS connections
+  </Card>
+  
+  <Card title="Strong passwords" icon="key">
+    Enforce password requirements for user accounts
+  </Card>
+  
+  <Card title="Regular backups" icon="database">
+    Schedule automated backups of database and Markdown files
+  </Card>
+  
+  <Card title="Update PHP" icon="arrow-up">
+    Keep PHP and dependencies updated to latest stable versions
+  </Card>
+</CardGroup>
+
+### File permissions best practices
+
+```bash
+# Set ownership to web server user
+chown -R www-data:www-data /path/to/SkillUp
+
+# Restrict file permissions
+find /path/to/SkillUp -type f -exec chmod 644 {} \;
+find /path/to/SkillUp -type d -exec chmod 755 {} \;
+
+# Make md_files writable for course content
+chmod 755 md_files
+```
+
+<Warning>
+  Never set permissions to 777 in production. Use the minimum necessary permissions for security.
+</Warning>
+
+## Troubleshooting
+
+### Common issues
+
+**Database connection fails:**
+
+<Steps>
+  <Step title="Verify credentials">
+    Double-check `DB_HOST`, `DB_USER`, `DB_PASS`, and `DB_NAME` in `include/config.php`
+  </Step>
+  
+  <Step title="Check MySQL service">
+    Ensure MySQL is running: `systemctl status mysql`
+  </Step>
+  
+  <Step title="Test connection">
+    Use `include/test.php` to diagnose connection issues
+  </Step>
+</Steps>
+
+**Cannot create courses or chapters:**
+
+- Verify `md_files` directory exists and is writable
+- Check PHP error logs for permission issues
+- Ensure user has professor role in database
+
+**Session errors:**
+
+- Verify session directory is writable: `session_save_path()`
+- Check session cookie settings in `php.ini`
+- Clear browser cookies and try again
+
+**API requests fail:**
+
+- Confirm API key is correctly generated in KeyTable
+- Check that professor account has associated key_id
+- Verify API endpoint URLs are correct
+
+## Environment variables
+
+For enhanced security, consider moving sensitive configuration to environment variables:
+
+```php include/config.php
+<?php
+// Use environment variables for sensitive data
+define('DB_HOST', getenv('SKILLUP_DB_HOST') ?: 'localhost');
+define('DB_USER', getenv('SKILLUP_DB_USER') ?: 'root');
+define('DB_PASS', getenv('SKILLUP_DB_PASS') ?: '');
+define('DB_NAME', getenv('SKILLUP_DB_NAME') ?: 'skillup');
+?>
+```
+
+Then set variables in your web server configuration or `.env` file (if using a framework).
+
+## Deployment options
+
+### Shared hosting
+
+1. Upload files via FTP/SFTP to `public_html` or `www` directory
+2. Create database through hosting control panel (cPanel, Plesk, etc.)
+3. Import SQL file using phpMyAdmin
+4. Update `include/config.php` with provided credentials
+
+### VPS/Dedicated server
+
+1. Install LAMP stack (Linux, Apache, MySQL, PHP)
+2. Clone repository to `/var/www/html` or custom directory
+3. Follow installation steps above
+4. Configure virtual host for domain
+
+### Docker (optional)
+
+Create a `docker-compose.yml` for containerized deployment:
+
+```yaml
+version: '3.8'
+services:
+  web:
+    image: php:8.2-apache
+    volumes:
+      - ./:/var/www/html
+    ports:
+      - "80:80"
+    depends_on:
+      - db
+      
+  db:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: skillup
+    volumes:
+      - ./assets/sql/skillup.sql:/docker-entrypoint-initdb.d/init.sql
+```
+
+<Note>
+  Docker configuration may require additional PHP extension installation and Apache configuration.
+</Note>
+
+## Next steps
+
+After successful installation:
+
+<CardGroup cols={2}>
+  <Card title="Explore features" icon="compass" href="/features">
+    Learn about all platform capabilities
+  </Card>
+  
+  <Card title="API documentation" icon="book" href="/api/overview">
+    Integrate with the REST API
+  </Card>
+</CardGroup>

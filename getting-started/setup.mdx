@@ -1,0 +1,179 @@
+---
+title: Setup
+description: Initial setup and configuration for the SkillUp platform
+---
+
+## Overview
+
+SkillUp is an online learning platform developed with PHP that allows users to access courses and educational content across multiple disciplines. This guide will walk you through the initial setup process.
+
+## System requirements
+
+Before installing SkillUp, ensure your system meets the following requirements:
+
+- PHP 8.0 or higher
+- MySQL 8.0 or higher (or MariaDB equivalent)
+- Web server (Apache, Nginx, or PHP built-in server)
+- Git (for cloning the repository)
+
+## Installation
+
+<Steps>
+  <Step title="Clone the repository">
+    Clone the SkillUp repository to your local machine or server:
+
+    ```bash
+    git clone https://github.com/jossweb/SkillUp.git
+    cd SkillUp
+    ```
+  </Step>
+
+  <Step title="Import the database schema">
+    Import the SQL file into your MySQL database. You can do this using phpMyAdmin or the MySQL command line:
+
+    ```bash
+    mysql -u your_username -p your_database_name < assets/sql/skillup.sql
+    ```
+
+    <Info>
+      The SQL file contains the complete database structure including tables for users, courses, chapters, categories, sessions, and API logs.
+    </Info>
+  </Step>
+
+  <Step title="Configure database connection">
+    Edit the configuration file at `include/config.php` to match your database settings:
+
+    ```php include/config.php
+    <?php
+    // Site configuration
+    define('SITE_NAME', 'SkillUp');
+    
+    // Path configuration
+    define('ASSETS_PATH', 'assets');
+    define('IMG_PATH', ASSETS_PATH . '/images');
+    define('CSS_PATH', ASSETS_PATH . '/css');
+    define('JS_PATH', ASSETS_PATH . '/js');
+    
+    // Database configuration
+    define('DB_HOST', 'localhost');     // Database host
+    define('DB_PORT', 3306);            // Port (3306 default for MySQL)
+    define('DB_USER', 'root');          // Username
+    define('DB_PASS', '');              // Password
+    define('DB_NAME', 'skillup');       // Database name
+    
+    define('DEBUG', true); // If true, errors will be displayed on pages
+    ?>
+    ```
+
+    <Warning>
+      Set `DEBUG` to `false` in production environments to prevent sensitive information from being displayed.
+    </Warning>
+  </Step>
+
+  <Step title="Test the database connection">
+    Navigate to `include/test.php` in your browser to verify the database connection is working correctly:
+
+    ```
+    http://localhost/SkillUp/include/test.php
+    ```
+
+    If the connection is successful, you should see a confirmation message. If there are errors, check your database credentials in `config.php`.
+  </Step>
+
+  <Step title="Configure your web server">
+    Point your web server's document root to the SkillUp directory, or access it through a subdirectory.
+
+    <CodeGroup>
+      ```apache Apache (.htaccess)
+      <IfModule mod_rewrite.c>
+          RewriteEngine On
+          RewriteBase /
+          RewriteCond %{REQUEST_FILENAME} !-f
+          RewriteCond %{REQUEST_FILENAME} !-d
+          RewriteRule ^(.*)$ index.php [L]
+      </IfModule>
+      ```
+
+      ```nginx Nginx
+      server {
+          listen 80;
+          server_name skillup.local;
+          root /path/to/SkillUp;
+          index index.php;
+
+          location / {
+              try_files $uri $uri/ /index.php?$query_string;
+          }
+
+          location ~ \.php$ {
+              fastcgi_pass unix:/var/run/php/php8.0-fpm.sock;
+              fastcgi_index index.php;
+              fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+              include fastcgi_params;
+          }
+      }
+      ```
+
+      ```bash PHP Built-in Server (Development Only)
+      cd /path/to/SkillUp
+      php -S localhost:8000
+      ```
+    </CodeGroup>
+  </Step>
+
+  <Step title="Access the platform">
+    Open your browser and navigate to your SkillUp installation:
+
+    ```
+    http://localhost/SkillUp
+    # or
+    http://localhost:8000
+    ```
+
+    You should now see the SkillUp homepage.
+  </Step>
+</Steps>
+
+## Project structure
+
+Understanding the project structure will help you navigate and customize SkillUp:
+
+```
+SkillUp/
+├── api/              # REST API endpoints
+│   ├── CreateAccount.php
+│   ├── NewCours.php
+│   ├── NewChapter.php
+│   ├── SaveMd.php
+│   └── ...
+├── assets/           # Static resources
+│   ├── css/         # Stylesheets
+│   ├── js/          # JavaScript files
+│   ├── images/      # Image files
+│   └── sql/         # Database schema
+├── include/          # PHP includes
+│   ├── config.php   # Configuration file
+│   ├── connectdb.php # Database connection
+│   ├── sessionManager.php
+│   └── tools.php
+├── pages/            # Application pages
+│   ├── index.php
+│   ├── connection.php
+│   ├── profile.php
+│   ├── formations.php
+│   └── ...
+└── index.php         # Entry point
+```
+
+## Next steps
+
+Now that you have SkillUp set up, you can:
+
+- [Configure the database](/getting-started/database-configuration) - Learn more about database schema and configuration
+- [Deploy to production](/getting-started/deployment) - Deploy SkillUp to a production server
+- Create your first administrator account
+- Start adding courses and content
+
+<Note>
+  The default admin credentials can be found in the database after importing the SQL file. Be sure to change these credentials immediately for security purposes.
+</Note>

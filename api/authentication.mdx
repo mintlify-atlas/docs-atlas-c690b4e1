@@ -1,0 +1,343 @@
+---
+title: API authentication
+description: How to obtain and use API keys for SkillUp API access
+---
+
+The SkillUp API uses token-based authentication to secure access to course management endpoints. Each teacher account is assigned a unique API key stored in the `KeyTable` database.
+
+## API key system
+
+Authentication is managed through a token system with the following characteristics:
+
+<Info>
+API keys are 64-character hexadecimal strings generated using cryptographically secure random bytes.
+</Info>
+
+### Database schema
+
+API keys are stored in the `KeyTable` with this structure:
+
+```sql
+CREATE TABLE KeyTable (
+  key_id INT PRIMARY KEY,
+  date_creation DATETIME DEFAULT CURRENT_TIMESTAMP,
+  actif TINYINT(1) DEFAULT 1,
+  token VARCHAR(100) NOT NULL
+);
+```
+
+Each `Utilisateurs` record has a `key_id` foreign key linking to their API token.
+
+### Token generation
+
+Tokens are generated using PHP's `random_bytes()` function to ensure uniqueness and security:
+
+```php
+function generateToken() {
+    $exists = 1;
+    while ($exists > 0){
+        $db = connectDB();
+        $token = bin2hex(random_bytes(32)); 
+        $sql = 'SELECT COUNT(*) FROM KeyTable WHERE token = :token';
+        $request = $db->prepare($sql);
+        $request->bindParam(':token', $token);
+        $request->execute();
+        $exists = $request->fetchColumn();
+    } 
+    return $token;
+}
+```
+
+## Getting your API key
+
+Teachers can access their API key through the SkillUp API interface at `/api/index.php`.
+
+<Steps>
+  <Step title="Log in as a teacher">
+    Navigate to the SkillUp platform and sign in with your teacher credentials. Only users with the `professeur` role can access the API interface.
+  </Step>
+  
+  <Step title="Access the API page">
+    Visit `https://skillup.great-site.net/api/` to view your API documentation page.
+  </Step>
+  
+  <Step title="Copy your API key">
+    Your unique API key is displayed in the "Ma clé d'accès" section. Use the copy button to copy it to your clipboard.
+  </Step>
+</Steps>
+
+### API key retrieval code
+
+The system retrieves your API key by joining session data with user and key tables:
+
+```php
+$sql = 'SELECT Utilisateurs.role, KeyTable.token 
+        FROM sessions 
+        INNER JOIN Utilisateurs ON Utilisateurs.id = sessions.user_id 
+        INNER JOIN KeyTable ON KeyTable.key_id = Utilisateurs.key_id 
+        WHERE sessions.token = :token';
+$request = $db->prepare($sql);
+$request->bindParam(':token', $_COOKIE['user_token']);
+$request->execute();
+$result = $request->fetch(PDO::FETCH_ASSOC);
+```
+
+## Regenerating your API key
+
+<Warning>
+Regenerating your API key will immediately invalidate the old key. Update all applications using the old key before regenerating.
+</Warning>
+
+If you suspect your API key has been compromised, regenerate it immediately:
+
+<Steps>
+  <Step title="Navigate to the API page">
+    Go to `https://skillup.great-site.net/api/` while logged in.
+  </Step>
+  
+  <Step title="Click the regenerate button">
+    Click the rotation icon button next to your API key.
+  </Step>
+  
+  <Step title="Confirm regeneration">
+    Submit the form to generate a new token. The old token is immediately invalidated.
+  </Step>
+  
+  <Step title="Update your applications">
+    Copy the new API key and update all applications that use the SkillUp API.
+  </Step>
+</Steps>
+
+### Regeneration implementation
+
+The regeneration process creates a new token and updates the database:
+
+```php
+if ($_SERVER["REQUEST_METHOD"] == "POST") {
+    $newtoken = generateToken();
+    while(CheckToken($newtoken)){
+        $newtoken = generateToken();
+    }
+    $now = date("Y-m-d H:i:s");
+    $sql = 'UPDATE Keytable 
+            SET Keytable.token = :ntoken, 
+                Keytable.date_creation = :now 
+            WHERE Keytable.token = :otoken';
+    $request = $db->prepare($sql);
+    $request->bindParam(':ntoken', $newtoken);
+    $request->bindParam(':now', $now);
+    $request->bindParam(':otoken', $result['token']);
+    $request->execute();
+}
+```
+
+## Using authentication in requests
+
+Include your API key as a `token` parameter in every POST request:
+
+### cURL example
+
+```bash
+curl -X POST https://skillup.great-site.net/api/GetMd.php \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "token=98e56f053717bf17088136a00671218abd59a776404a98d907e69616b917977f" \
+  -d "chapter=27" \
+  -d "cours=11"
+```
+
+### PHP example
+
+```php
+$url = 'https://skillup.great-site.net/api/SaveMd.php';
+$data = [
+    'token' => '98e56f053717bf17088136a00671218abd59a776404a98d907e69616b917977f',
+    'chapter' => 27,
+    'cours' => 11,
+    'markdown' => '# Introduction to PHP\n\nPHP is a server-side scripting language...'
+];
+
+$options = [
+    'http' => [
+        'header'  => "Content-Type: application/x-www-form-urlencoded\r\n",
+        'method'  => 'POST',
+        'content' => http_build_query($data)
+    ]
+];
+
+$context  = stream_context_create($options);
+$result = file_get_contents($url, false, $context);
+$response = json_decode($result, true);
+```
+
+### JavaScript example
+
+```javascript
+const formData = new URLSearchParams();
+formData.append('token', '98e56f053717bf17088136a00671218abd59a776404a98d907e69616b917977f');
+formData.append('chapter', '27');
+formData.append('cours', '11');
+
+fetch('https://skillup.great-site.net/api/GetMd.php', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/x-www-form-urlencoded',
+  },
+  body: formData
+})
+.then(response => response.json())
+.then(data => {
+  if (data.success) {
+    console.log('Chapter content:', data.content);
+  } else {
+    console.error('Error:', data.error);
+  }
+})
+.catch(error => console.error('Request failed:', error));
+```
+
+## Token validation
+
+The API validates tokens using the `CheckToken()` function:
+
+```php
+function CheckToken($token){
+    $db = connectDB();
+    $sql = 'SELECT Utilisateurs.id 
+            FROM Utilisateurs 
+            INNER JOIN KeyTable ON KeyTable.key_id = Utilisateurs.key_id 
+            WHERE KeyTable.token = :token';
+    $request = $db->prepare($sql);
+    $request->bindParam(':token', $token);
+    $request->execute();
+    $user = $request->fetch(PDO::FETCH_ASSOC);
+    
+    if($user){
+        return true;
+    } else {
+        return false;
+    }
+}
+```
+
+This function:
+1. Queries the database for a user associated with the provided token
+2. Returns `true` if a valid user is found
+3. Returns `false` if the token is invalid or expired
+
+## Security best practices
+
+<Warning>
+API keys provide full access to your course content. Protect them like passwords.
+</Warning>
+
+Follow these security guidelines:
+
+### Do's
+
+<Check>Store API keys in environment variables, not in code</Check>
+<Check>Use HTTPS for all API requests</Check>
+<Check>Regenerate keys immediately if compromised</Check>
+<Check>Monitor the `ApiLogs` table for suspicious activity</Check>
+<Check>Implement proper error handling in your applications</Check>
+
+### Don'ts
+
+<Warning>Never commit API keys to version control</Warning>
+<Warning>Never share API keys via email or chat</Warning>
+<Warning>Never expose API keys in client-side JavaScript</Warning>
+<Warning>Never use the same key across multiple applications</Warning>
+
+### Rate limiting and logging
+
+The API implements automatic rate limiting based on failed request attempts:
+
+```php
+function LogsCheck() {
+    $ip = GetIP();
+    
+    if (!empty($ip)) {
+        $db = connectDB();
+        $dateH_check = (new DateTime('-30 minutes'))->format('Y-m-d H:i:s');
+        $sql = 'SELECT COUNT(ApiLogs.id) AS nb_denied 
+                FROM ApiLogs 
+                WHERE ApiLogs.date_heure > :dateheure 
+                  AND ApiLogs.succes = FALSE 
+                  AND ip = :ip';
+        $request = $db->prepare($sql);
+        $request->bindParam(':dateheure', $dateH_check);
+        $request->bindParam(':ip', $ip);
+        $request->execute();
+        $result = $request->fetch(PDO::FETCH_ASSOC);
+        
+        if ($result['nb_denied'] < 10) {
+            return true;
+        } else {
+            return false; // Blocked due to too many failed attempts
+        }
+    } else {
+        return false;
+    }
+}
+```
+
+<Info>
+If you make more than 10 failed requests within 30 minutes, your IP address will be temporarily blocked from accessing the API.
+</Info>
+
+### Request logging
+
+Every API request is logged with success status and IP address:
+
+```php
+function AddInLog($state){
+    $db = connectDB();
+    $ip = GetIP();
+    $sql = 'INSERT INTO ApiLogs (ApiLogs.ip, ApiLogs.succes) 
+            VALUES (:ip, :success)';
+    $request = $db->prepare($sql);
+    $request->bindParam(':ip', $ip);
+    $request->bindParam(':success', $state);
+    $request->execute();
+}
+```
+
+## Testing your authentication
+
+Test your API key with a simple request:
+
+```bash
+curl -X POST https://skillup.great-site.net/api/GetMd.php \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "token=YOUR_API_KEY" \
+  -d "chapter=27" \
+  -d "cours=11"
+```
+
+Expected response if authenticated:
+
+```json
+{
+  "success": true,
+  "content": "# Chapter content..."
+}
+```
+
+Expected response if authentication fails:
+
+```json
+{
+  "error": "Invalid or expired token"
+}
+```
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Endpoints" icon="code" href="/api/endpoints/get-md">
+    Explore available API endpoints and parameters
+  </Card>
+  
+  <Card title="GetMd endpoint" icon="file-arrow-down" href="/api/endpoints/get-md">
+    Retrieve markdown content from chapters
+  </Card>
+</CardGroup>

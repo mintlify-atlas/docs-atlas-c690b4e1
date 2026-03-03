@@ -1,0 +1,148 @@
+---
+title: Welcome to SkillUp
+description: A free online learning platform built with PHP for computer science education
+---
+
+<img
+  className="block dark:hidden"
+  src="/images/hero-light.svg"
+  alt="SkillUp Hero Light"
+/>
+<img
+  className="hidden dark:block"
+  src="/images/hero-dark.svg"
+  alt="SkillUp Hero Dark"
+/>
+
+## What is SkillUp?
+
+SkillUp is a free online learning platform designed to help users train and find information across multiple disciplines. Developed as part of web and database courses at the **Université de Tours** for first-year computer science students, the platform focuses primarily on computer science education while being architected to support diverse domains.
+
+The platform enables learners to study at their own pace with access to comprehensive courses, while providing instructors with powerful tools to create and manage educational content.
+
+<CardGroup cols={2}>
+  <Card
+    title="Get started"
+    icon="rocket"
+    href="/getting-started/setup"
+  >
+    Install and configure SkillUp on your server in minutes
+  </Card>
+  <Card
+    title="Explore features"
+    icon="star"
+    href="/features"
+  >
+    Discover the platform's comprehensive feature set
+  </Card>
+  <Card
+    title="API reference"
+    icon="code"
+    href="/api/overview"
+  >
+    Integrate SkillUp's REST API into your applications
+  </Card>
+  <Card
+    title="Installation guide"
+    icon="server"
+    href="/installation"
+  >
+    Complete setup instructions for deployment
+  </Card>
+</CardGroup>
+
+## Why SkillUp?
+
+SkillUp was built with three core principles in mind:
+
+### 100% free learning
+
+All courses and resources are completely free. The platform provides full access to educational materials without any cost, enabling anyone to learn and develop their skills without financial barriers.
+
+### Self-paced education
+
+Users can organize their learning according to their own schedule, without time pressure or rigid constraints. The flexible architecture supports individual learning styles and paces.
+
+### Always up-to-date content
+
+Courses are continuously updated to stay current with the latest knowledge and skills in each domain, ensuring learners have access to relevant and modern educational content.
+
+## Key statistics
+
+SkillUp tracks platform engagement through real-time statistics:
+
+```php ~/workspace/source/include/stats.php
+function getStats() {
+    $db = connectDB();
+    $stats = [
+        'utilisateurs' => 0,
+        'cours' => 0,
+        'profs' => 0
+    ];
+    
+    $sql = "SELECT COUNT(*) as total FROM Utilisateurs";
+    $query = $db->query($sql);
+    $stats['utilisateurs'] = $query->fetch(PDO::FETCH_ASSOC)['total'];
+    
+    $sql = "SELECT COUNT(*) as total FROM Cours";
+    $query = $db->query($sql);
+    $stats['cours'] = $query->fetch(PDO::FETCH_ASSOC)['total'];
+    
+    $sql = "SELECT COUNT(*) as total FROM Utilisateurs WHERE role = 'professeur'";
+    $query = $db->query($sql);
+    $stats['profs'] = $query->fetch(PDO::FETCH_ASSOC)['total'];
+    
+    return $stats;
+}
+```
+
+The homepage displays these statistics to showcase platform activity and engagement.
+
+## Technology stack
+
+SkillUp is built using:
+
+- **Backend**: PHP 8.0+ with PDO for database interactions
+- **Database**: MySQL 8.0+ with utf8mb4 character set
+- **Frontend**: Vanilla JavaScript with responsive CSS
+- **Architecture**: MVC-style organization with session management
+- **Security**: Password hashing, prepared statements, and CSRF protection
+
+## Project structure
+
+The codebase follows a clear organizational structure:
+
+```
+/api          - REST API endpoints for course management
+/assets       - Static resources (CSS, JS, images, SQL)
+/include      - PHP includes (config, database, utilities)
+/pages        - Application pages (profile, courses, dashboard)
+index.php     - Landing page and entry point
+```
+
+## Academic origins
+
+Developed at the **Université de Tours** as part of first-year computer science curriculum, SkillUp serves as both a practical learning platform and a demonstration of modern web development practices. The project encompasses web development fundamentals, database design, and user experience principles.
+
+<Note>
+  SkillUp is an open-source educational project designed to support free learning worldwide.
+</Note>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card
+    title="Installation"
+    icon="download"
+    href="/installation"
+  >
+    Set up SkillUp on your own server
+  </Card>
+  <Card
+    title="Features"
+    icon="list-check"
+    href="/features"
+  >
+    Learn about all platform capabilities
+  </Card>
+</CardGroup>

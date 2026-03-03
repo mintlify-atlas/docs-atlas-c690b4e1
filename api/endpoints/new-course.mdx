@@ -1,0 +1,240 @@
+---
+title: Create new course
+description: Create a new course with specified category and metadata
+---
+
+## Endpoint
+
+```http
+POST /api/NewCours.php
+```
+
+Create a new course in the SkillUp platform. This endpoint inserts a new course record into the database with the specified name, category, description, and assigns it to the authenticated professor.
+
+## Authentication
+
+This endpoint requires a valid authentication token and passes a logs check. The token must be included in the request body.
+
+<Warning>
+  Invalid or expired tokens will result in a 401 Unauthorized response. This endpoint also requires passing the LogsCheck() validation.
+</Warning>
+
+## Request parameters
+
+<ParamField body="token" type="string" required>
+  Authentication token obtained from login
+</ParamField>
+
+<ParamField body="name" type="string" required>
+  The name/title of the new course
+</ParamField>
+
+<ParamField body="prompt" type="string" required>
+  Course prompt or initial content (required parameter but not directly used in DB insertion)
+</ParamField>
+
+<ParamField body="categorie" type="string" required>
+  Course category. Must be one of the following:
+  - `"Développement Web"`
+  - `"Cybersécurité"`
+  - `"Intelligence Artificielle"`
+  - `"Réseaux Informatiques"`
+  - `"Systèmes d'Exploitation"`
+  - `"Base de Données"`
+  - `"Développement Mobile"`
+  - `"Programmation Orientée Objet"`
+  - `"Architecture Logicielle"`
+  - `"Cloud Computing"`
+  - `"DevOps"`
+  - `"Algorithmique"`
+  - `"Informatique Théorique"`
+  - `"UX/UI Design"`
+  - `"Robotique"`
+</ParamField>
+
+<ParamField body="description" type="string">
+  Optional description of the course. Can be null.
+</ParamField>
+
+## Response
+
+<ResponseField name="success" type="boolean">
+  Indicates whether the course was created successfully
+</ResponseField>
+
+<ResponseField name="cours_id" type="string">
+  The ID of the newly created course
+</ResponseField>
+
+<ResponseField name="message" type="string">
+  Error or informational message
+</ResponseField>
+
+## Response codes
+
+| Code | Description |
+|------|-------------|
+| 200  | Course created successfully |
+| 401  | Invalid token, unknown category, missing parameters, or database error |
+
+## Category mapping
+
+The endpoint maps category names to internal category IDs:
+
+| Category Name | ID |
+|---------------|----|
+| Développement Web | 1 |
+| Cybersécurité | 2 |
+| Intelligence Artificielle | 3 |
+| Réseaux Informatiques | 4 |
+| Systèmes d'Exploitation | 5 |
+| Base de Données | 6 |
+| Développement Mobile | 7 |
+| Programmation Orientée Objet | 8 |
+| Architecture Logicielle | 9 |
+| Cloud Computing | 10 |
+| DevOps | 11 |
+| Algorithmique | 12 |
+| Informatique Théorique | 13 |
+| UX/UI Design | 14 |
+| Robotique | 15 |
+
+## Error messages
+
+- `"Can't get user id, genere new token and try again"` - Unable to retrieve professor ID from token
+- `"Error, unknown categorie, try again"` - Invalid category name provided
+- `"ERROR : Invalid token"` - Authentication token is invalid or has expired
+- `"ERROR : name is missing"` - Required name parameter not provided
+- `"ERROR : prompt is missing"` - Required prompt parameter not provided
+- `"ERROR : cateegorie is missing"` - Required category parameter not provided
+- `"ERROR : token is missing"` - Required token parameter not provided
+- `"ERROR : one or more parameters are missing"` - Generic missing parameters error
+
+## Examples
+
+<Tabs>
+  <Tab title="cURL">
+    ```bash
+    curl -X POST https://yourdomain.com/api/NewCours.php \
+      -H "Content-Type: application/x-www-form-urlencoded" \
+      -d "token=your_auth_token_here" \
+      -d "name=Introduction to Web Development" \
+      -d "prompt=Learn the basics of HTML, CSS, and JavaScript" \
+      -d "categorie=Développement Web" \
+      -d "description=A comprehensive guide for beginners"
+    ```
+  </Tab>
+  
+  <Tab title="PHP">
+    ```php
+    <?php
+    $url = 'https://yourdomain.com/api/NewCours.php';
+    $data = [
+        'token' => 'your_auth_token_here',
+        'name' => 'Introduction to Web Development',
+        'prompt' => 'Learn the basics of HTML, CSS, and JavaScript',
+        'categorie' => 'Développement Web',
+        'description' => 'A comprehensive guide for beginners'
+    ];
+
+    $options = [
+        'http' => [
+            'header'  => "Content-type: application/x-www-form-urlencoded\r\n",
+            'method'  => 'POST',
+            'content' => http_build_query($data)
+        ]
+    ];
+
+    $context  = stream_context_create($options);
+    $result = file_get_contents($url, false, $context);
+    $response = json_decode($result, true);
+
+    if ($response['success']) {
+        echo "Course created with ID: " . $response['cours_id'];
+    } else {
+        echo "Error: " . $response['message'];
+    }
+    ?>
+    ```
+  </Tab>
+  
+  <Tab title="JavaScript">
+    ```javascript
+    const formData = new URLSearchParams();
+    formData.append('token', 'your_auth_token_here');
+    formData.append('name', 'Introduction to Web Development');
+    formData.append('prompt', 'Learn the basics of HTML, CSS, and JavaScript');
+    formData.append('categorie', 'Développement Web');
+    formData.append('description', 'A comprehensive guide for beginners');
+
+    fetch('https://yourdomain.com/api/NewCours.php', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+      if (data.success) {
+        console.log('Course created with ID:', data.cours_id);
+      } else {
+        console.error('Error:', data.message);
+      }
+    });
+    ```
+  </Tab>
+</Tabs>
+
+## Success response example
+
+```json
+{
+  "success": true,
+  "cours_id": "42"
+}
+```
+
+## Error response examples
+
+<Tabs>
+  <Tab title="Invalid token">
+    ```json
+    {
+      "success": false,
+      "message": "ERROR : Invalid token"
+    }
+    ```
+  </Tab>
+  
+  <Tab title="Unknown category">
+    ```json
+    {
+      "success": false,
+      "message": "Error, unknown categorie, try again"
+    }
+    ```
+  </Tab>
+  
+  <Tab title="Missing name">
+    ```json
+    {
+      "success": false,
+      "message": "ERROR : name is missing"
+    }
+    ```
+  </Tab>
+  
+  <Tab title="User ID error">
+    ```json
+    {
+      "success": false,
+      "message": "Can't get user id, genere new token and try again"
+    }
+    ```
+  </Tab>
+</Tabs>
+
+<Note>
+  The course illustration URL is automatically generated using the `getAvatar()` function. If unavailable, it defaults to `https://remyweb.fr/images/1361465141845032960.webp`.
+</Note>

@@ -1,0 +1,188 @@
+---
+title: Save markdown content
+description: Save or update markdown content for a course chapter
+---
+
+## Endpoint
+
+```http
+POST /api/SaveMd.php
+```
+
+Save or update the markdown content of a specific chapter within a course. This endpoint writes the provided markdown content to the server's file system.
+
+## Authentication
+
+This endpoint requires a valid authentication token and passes a logs check. The token must be included in the request body.
+
+<Warning>
+  Invalid or expired tokens will result in a 401 Unauthorized response. This endpoint also requires passing the LogsCheck() validation.
+</Warning>
+
+## Request parameters
+
+<ParamField body="token" type="string" required>
+  Authentication token obtained from login
+</ParamField>
+
+<ParamField body="markdown" type="string" required>
+  The markdown content to save to the chapter file
+</ParamField>
+
+<ParamField body="chapter" type="string" required>
+  The chapter ID where the markdown content will be saved
+</ParamField>
+
+<ParamField body="cours" type="string" required>
+  The course ID that contains the chapter
+</ParamField>
+
+## Response
+
+<ResponseField name="success" type="boolean">
+  Indicates whether the markdown was saved successfully
+</ResponseField>
+
+<ResponseField name="error" type="string">
+  Error message if the request failed
+</ResponseField>
+
+## Response codes
+
+| Code | Description |
+|------|-------------|
+| 200  | Markdown content saved successfully |
+| 401  | Invalid token, chapter not found, missing parameters, or failed logs check |
+
+## Error messages
+
+- `"Can't found this chapter"` - The specified chapter file does not exist
+- `"Invalid or expired token"` - Authentication token is invalid or has expired
+- `"Syntax error in request. Please check the documentation and try again."` - Missing required parameters
+
+## Examples
+
+<Tabs>
+  <Tab title="cURL">
+    ```bash
+    curl -X POST https://yourdomain.com/api/SaveMd.php \
+      -H "Content-Type: application/x-www-form-urlencoded" \
+      -d "token=your_auth_token_here" \
+      -d "cours=123" \
+      -d "chapter=456" \
+      -d "markdown=# Chapter Title%0A%0AThis is the updated content..."
+    ```
+  </Tab>
+  
+  <Tab title="PHP">
+    ```php
+    <?php
+    $url = 'https://yourdomain.com/api/SaveMd.php';
+    $markdown = <<<MD
+    # Chapter Title
+    
+    This is the updated markdown content.
+    
+    ## Section 1
+    
+    Content here...
+    MD;
+
+    $data = [
+        'token' => 'your_auth_token_here',
+        'cours' => '123',
+        'chapter' => '456',
+        'markdown' => $markdown
+    ];
+
+    $options = [
+        'http' => [
+            'header'  => "Content-type: application/x-www-form-urlencoded\r\n",
+            'method'  => 'POST',
+            'content' => http_build_query($data)
+        ]
+    ];
+
+    $context  = stream_context_create($options);
+    $result = file_get_contents($url, false, $context);
+    $response = json_decode($result, true);
+
+    if ($response['success']) {
+        echo "Markdown saved successfully!";
+    }
+    ?>
+    ```
+  </Tab>
+  
+  <Tab title="JavaScript">
+    ```javascript
+    const markdown = `# Chapter Title
+
+This is the updated markdown content.
+
+## Section 1
+
+Content here...`;
+
+    const formData = new URLSearchParams();
+    formData.append('token', 'your_auth_token_here');
+    formData.append('cours', '123');
+    formData.append('chapter', '456');
+    formData.append('markdown', markdown);
+
+    fetch('https://yourdomain.com/api/SaveMd.php', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+      if (data.success) {
+        console.log('Markdown saved successfully!');
+      }
+    });
+    ```
+  </Tab>
+</Tabs>
+
+## Success response example
+
+```json
+{
+  "success": true
+}
+```
+
+## Error response examples
+
+<Tabs>
+  <Tab title="Chapter not found">
+    ```json
+    {
+      "error": "Can't found this chapter"
+    }
+    ```
+  </Tab>
+  
+  <Tab title="Invalid token">
+    ```json
+    {
+      "error": "Invalid or expired token"
+    }
+    ```
+  </Tab>
+  
+  <Tab title="Missing parameters">
+    ```json
+    {
+      "error": "Syntax error in request. Please check the documentation and try again."
+    }
+    ```
+  </Tab>
+</Tabs>
+
+<Note>
+  The chapter file must already exist. This endpoint updates existing files only. The file path is constructed as `../md_files/{cours}/{chapter}.md` on the server.
+</Note>

@@ -1,0 +1,311 @@
+---
+title: Platform features
+description: Comprehensive overview of SkillUp's educational platform capabilities
+---
+
+## Overview
+
+SkillUp provides a complete learning management system with features for students, instructors, and administrators. The platform supports course creation, content management, user progress tracking, and API-based integrations.
+
+## User management
+
+### Authentication and sessions
+
+SkillUp implements secure session management with token-based authentication:
+
+```php ~/workspace/source/include/sessionManager.php
+function IsConnected(): bool {
+    $db = connectDB();
+
+    // Delete expired sessions on each call
+    $now = new DateTime();
+    $nowFormatted = $now->format('Y-m-d H:i:s');
+
+    $sql = "DELETE FROM sessions WHERE expires_at < :now";
+    $stmt = $db->prepare($sql);
+    $stmt->bindParam(':now', $nowFormatted);
+    $stmt->execute();
+
+    if (!isset($_COOKIE['user_token'])) {
+        return false; 
+    }
+    
+    $sql = "SELECT user_id, expires_at FROM sessions WHERE token = :token";
+    $stmt = $db->prepare($sql);
+    $stmt->bindParam(':token', $_COOKIE['user_token'], PDO::PARAM_STR);
+    $stmt->execute();
+    $result = $stmt->fetch(PDO::FETCH_ASSOC);
+
+    if (!$result) {
+        return false;
+    }
+
+    $expires_at = new DateTime($result['expires_at']);
+    if ($expires_at > $now) {
+        return true;  
+    }
+
+    return false; 
+}
+```
+
+The session management automatically cleans up expired sessions and validates tokens on every request.
+
+### User roles
+
+The platform supports two primary user roles:
+
+<CardGroup cols={2}>
+  <Card title="Student (étudiant)" icon="user-graduate">
+    - Browse and search courses
+    - Enroll in courses
+    - Track learning progress
+    - Mark courses as favorites
+    - View course content and chapters
+  </Card>
+  <Card title="Professor (professeur)" icon="chalkboard-user">
+    - All student capabilities
+    - Create and publish courses
+    - Manage course content
+    - Add/edit chapters with Markdown
+    - Access API keys for integrations
+    - View instructor dashboard with analytics
+  </Card>
+</CardGroup>
+
+### Profile management
+
+Users can customize their profiles with:
+
+- Avatar upload and management
+- Personal information (name, email)
+- Role requests (student to professor)
+- Account deletion
+
+## Course management
+
+### Course creation
+
+Instructors can create courses through the web interface or API. Each course includes:
+
+```php ~/workspace/source/pages/addCourse.php
+if($_GET['cours'] == "00000"){ // New course
+    $sql_new = 'INSERT INTO Cours (nom, illustration_url, description, prof_id) 
+    VALUES ("Nouveau cours", "https://remyweb.fr/images/1361465141845032960.webp", "Entrez votre description", :prof)';
+    $request_new = $db->prepare($sql_new);
+    $request_new->bindParam(':prof', $result['id']);
+    $request_new->execute();
+    $idCours = $db->lastInsertId(); 
+    
+    // Add initial chapter
+    $sql_chapter = 'INSERT INTO Chapitres (titre, cours_id) VALUES ("Chapitre 1 : demo", :cours_id)';
+    $request_chapter = $db->prepare($sql_chapter);
+    $request_chapter->bindParam(':cours_id', $idCours);
+    $request_chapter->execute();
+    $chapter_id = $db->lastInsertId();
+    
+    $dir_path = '../md_files/' . $idCours;
+    $file_path = $dir_path . '/' . $chapter_id . '.md';
+    
+    if (!file_exists($dir_path)) {
+        mkdir($dir_path, 0777, true); 
+    }
+    
+    if (!file_exists($file_path)) {
+        $init_content = "# Chapitre 1 : \n \n à vous de jouer !";
+        file_put_contents($file_path, $init_content); 
+    }
+}
+```
+
+### Course components
+
+<Steps>
+  <Step title="Course metadata">
+    Each course has a name, description, category, and AI-generated illustration
+  </Step>
+  <Step title="Chapter organization">
+    Courses are divided into chapters, each stored as individual Markdown files
+  </Step>
+  <Step title="Category assignment">
+    Courses belong to one of 15+ categories including Web Development, Cybersecurity, AI, Databases, and more
+  </Step>
+  <Step title="Progress tracking">
+    The system tracks enrollments, views, and favorites for each course
+  </Step>
+</Steps>
+
+### Chapter management
+
+Chapters support rich Markdown content:
+
+- **Markdown editing**: Full Markdown syntax support for content creation
+- **File storage**: Each chapter is stored as a `.md` file in `/md_files/{course_id}/{chapter_id}.md`
+- **API access**: Chapters can be created and updated via REST API
+- **Versioning**: Content is tracked with creation timestamps
+
+<Note>
+  Chapters are automatically organized by course ID in the file system, making content management straightforward.
+</Note>
+
+## Categories
+
+SkillUp includes 15 predefined categories covering computer science domains:
+
+| Category | Description |
+|----------|-------------|
+| Développement Web | HTML, CSS, JavaScript, and modern frameworks |
+| Cybersécurité | Security principles, threats, and system protection |
+| Intelligence Artificielle | Machine learning, deep learning, and AI applications |
+| Réseaux Informatiques | Network protocols, architecture, and communication |
+| Systèmes d'Exploitation | Windows, Linux, and macOS fundamentals |
+| Base de Données | Relational and NoSQL database design and administration |
+| Développement Mobile | Native and hybrid mobile app development |
+| Programmation Orientée Objet | OOP concepts with Java, C#, Python |
+| Architecture Logicielle | Software design patterns and architecture |
+| Cloud Computing | AWS, Azure, GCP, and scalable deployments |
+| DevOps | CI/CD, automation, and infrastructure management |
+| Algorithmique | Data structures and fundamental algorithms |
+| Informatique Théorique | Mathematical and logical foundations |
+| UX/UI Design | User interface and experience design |
+| Robotique | Robot programming and autonomous control |
+
+## Instructor dashboard
+
+Professors have access to comprehensive analytics:
+
+```php ~/workspace/source/pages/dashboard.php
+$sql_prof = 'SELECT COUNT(DISTINCT Inscriptions.id) AS nb_inscription, 
+             COUNT(DISTINCT Vues.id) AS nb_vues, 
+             COUNT(DISTINCT Favoris.id) AS nb_likes 
+             FROM Utilisateurs 
+             INNER JOIN Cours ON Utilisateurs.id = Cours.prof_id 
+             LEFT JOIN Inscriptions ON Cours.id = Inscriptions.cours_id 
+             LEFT JOIN Vues ON Cours.id = Vues.cours_id 
+             LEFT JOIN Favoris ON Cours.id = Favoris.cours_id 
+             WHERE Utilisateurs.e_mail = :email';    
+```
+
+The dashboard displays:
+
+- Total enrollments across all courses
+- Course view counts
+- Favorite/like metrics
+- 30-day enrollment trend graphs
+- Per-course analytics and management
+
+## Trending courses
+
+The homepage features trending courses based on enrollment:
+
+```php ~/workspace/source/include/stats.php
+function getTrendingCourses($limit = 4) {
+    $db = connectDB();
+    
+    $sql = "SELECT c.id, c.nom, c.illustration_url, c.description, cat.nom as categorie_nom, 
+            COUNT(i.id) as nombre_inscrits
+            FROM Cours c
+            LEFT JOIN Inscriptions i ON c.id = i.cours_id
+            LEFT JOIN Categories cat ON c.categorie_id = cat.id
+            GROUP BY c.id
+            ORDER BY nombre_inscrits DESC, c.date_creation DESC
+            LIMIT :limit";
+    
+    $stmt = $db->prepare($sql);
+    $stmt->bindParam(':limit', $limit, PDO::PARAM_INT);
+    $stmt->execute();
+    return $stmt->fetchAll(PDO::FETCH_ASSOC);
+}
+```
+
+## REST API
+
+SkillUp provides a REST API for programmatic access:
+
+<CardGroup cols={2}>
+  <Card title="GetMd.php" icon="file-code">
+    Retrieve Markdown content for a specific chapter
+  </Card>
+  <Card title="SaveMd.php" icon="floppy-disk">
+    Save Markdown content to a chapter
+  </Card>
+  <Card title="UploadImage.php" icon="image">
+    Upload and store Base64-encoded images
+  </Card>
+  <Card title="NewCours.php" icon="plus">
+    Create a new course programmatically
+  </Card>
+  <Card title="NewChapter.php" icon="book">
+    Add chapters to existing courses
+  </Card>
+  <Card title="CleanImg.php" icon="broom">
+    Clean unused images from course content
+  </Card>
+</CardGroup>
+
+### API authentication
+
+All API requests require a token-based authentication:
+
+<Warning>
+  API keys are unique per professor and should never be shared. Keys can be regenerated from the API dashboard.
+</Warning>
+
+### Example API request
+
+```bash
+curl -X POST https://skillup.great-site.net/api/SaveMd.php \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "token=your_api_key" \
+  -d "chapter=13" \
+  -d "cours=12" \
+  --data-urlencode "markdown=# Chapitre 1 :"
+```
+
+## Database architecture
+
+SkillUp uses a well-structured MySQL database:
+
+### Core tables
+
+- **Utilisateurs**: User accounts with roles and authentication
+- **Cours**: Course information and metadata
+- **Chapitres**: Individual course chapters with Markdown content
+- **Categories**: Course categorization
+- **Inscriptions**: Course enrollments
+- **Vues**: Course view tracking
+- **Favoris**: User favorites/likes
+- **Sessions**: Active user sessions
+- **KeyTable**: API authentication keys
+- **DemandeProf**: Professor role requests
+- **ApiLogs**: API request logging
+
+## Security features
+
+<CardGroup cols={2}>
+  <Card title="Password hashing" icon="lock">
+    All passwords are hashed using PHP's `password_hash()` with default algorithm
+  </Card>
+  <Card title="Prepared statements" icon="shield-check">
+    All database queries use PDO prepared statements to prevent SQL injection
+  </Card>
+  <Card title="Session expiration" icon="clock">
+    Sessions automatically expire and are cleaned up on validation
+  </Card>
+  <Card title="Role-based access" icon="user-shield">
+    Features are restricted based on user roles with server-side validation
+  </Card>
+</CardGroup>
+
+## Responsive design
+
+The platform is fully responsive with:
+
+- Mobile-first CSS architecture
+- Adaptive navigation with burger menu
+- Touch-optimized interfaces
+- Dark mode support via `prefers-color-scheme`
+
+<Note>
+  The platform automatically adapts to screen size, providing an optimal learning experience on computers, tablets, and smartphones.
+</Note>

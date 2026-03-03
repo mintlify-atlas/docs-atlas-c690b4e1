@@ -1,0 +1,317 @@
+---
+title: Teacher role
+description: Understand teacher capabilities including course creation, content management, and API access
+---
+
+Teachers on the SkillUp platform have advanced privileges to create, manage, and publish educational content. This role requires approval from platform administrators and provides access to course management tools and API resources.
+
+## Becoming a teacher
+
+Users can request teacher status through their profile page:
+
+<Steps>
+  <Step title="Submit request">
+    Navigate to your profile and fill out the teacher request form with a presentation about yourself (`pages/profile.php:84-92`)
+  </Step>
+  <Step title="Wait for approval">
+    Administrators review your request in the admin dashboard (`pages/admin.php:148-183`)
+  </Step>
+  <Step title="Get approved">
+    Once approved, your role changes to "professeur" and you receive an API key (`pages/admin.php:36-61`)
+  </Step>
+  <Step title="Access dashboard">
+    Navigate to the teacher dashboard to start creating courses
+  </Step>
+</Steps>
+
+<Note>
+  Users can only have one pending teacher request at a time. The system prevents duplicate submissions by checking the `DemandeProf` table.
+</Note>
+
+## Teacher dashboard
+
+The teacher dashboard (`pages/dashboard.php:1-316`) provides a comprehensive overview of your teaching activity:
+
+### Statistics overview
+
+<CardGroup cols={3}>
+  <Card title="Total students" icon="users">
+    Number of users enrolled across all your courses
+  </Card>
+  <Card title="Total views" icon="eye">
+    Cumulative views across all your course content
+  </Card>
+  <Card title="Popularity" icon="thumbs-up">
+    Number of users who favorited your courses
+  </Card>
+</CardGroup>
+
+### Analytics features
+
+Teachers can track course performance through detailed analytics (`pages/dashboard.php:52-67`):
+
+```php
+// Get enrollment data for the last 30 days
+$sql_data = "SELECT DATE(Inscriptions.date_inscription) AS date, 
+                    COUNT(Inscriptions.id) AS count 
+             FROM Inscriptions 
+             INNER JOIN Cours ON Inscriptions.cours_id = Cours.id 
+             WHERE Utilisateurs.e_mail = :email 
+               AND Inscriptions.date_inscription >= :date 
+             GROUP BY date ORDER BY date ASC";
+```
+
+The dashboard displays:
+
+- Daily enrollment trends (last 30 days)
+- Day-over-day growth statistics
+- Interactive bar chart visualization using Chart.js
+
+<Accordion title="Understanding the statistics">
+  The dashboard calculates statistics in two time periods:
+  
+  - **All-time stats**: Total enrollments, views, and favorites since account creation
+  - **Today's growth**: New activity from the current day, shown with a "+X" indicator
+  
+  This helps teachers understand both overall performance and recent momentum.
+</Accordion>
+
+## Creating and managing courses
+
+Teachers can create new courses directly from the dashboard (`pages/addCourse.php:27-61`):
+
+### Course creation workflow
+
+1. Click "Nouveau cours" button on the dashboard
+2. A new course is automatically created with default values
+3. An initial demo chapter is added to the course
+4. You're redirected to the course editor
+
+```php
+// New course creation process
+$sql_new = 'INSERT INTO Cours (nom, illustration_url, description, prof_id) 
+            VALUES ("Nouveau cours", "...", "Entrez votre description", :prof)';
+
+// Add initial chapter
+$sql_chapter = 'INSERT INTO Chapitres (titre, cours_id) 
+                VALUES ("Chapitre 1 : demo", :cours_id)';
+
+// Create markdown file for chapter content
+$dir_path = '../md_files/' . $idCours;
+$file_path = $dir_path . '/' . $chapter_id . '.md';
+file_put_contents($file_path, "# Chapitre 1 : \n \n à vous de jouer !");
+```
+
+### Course editor features
+
+The course editor (`pages/addCourse.php:246-475`) provides comprehensive content management:
+
+<CardGroup cols={2}>
+  <Card title="Course metadata" icon="pen-to-square">
+    Edit course name, category, and description
+  </Card>
+  <Card title="Cover image" icon="image">
+    Generate AI-powered course illustrations
+  </Card>
+  <Card title="Chapter management" icon="list">
+    Add, edit, rename, and delete course chapters
+  </Card>
+  <Card title="Content editing" icon="code">
+    Write chapter content using markdown with live preview
+  </Card>
+</CardGroup>
+
+### Markdown editor
+
+The built-in markdown editor includes:
+
+- **Formatting toolbar**: Quick access to bold, italic, and heading styles
+- **Live preview**: Toggle between edit and preview modes
+- **Drag-and-drop images**: Upload images directly by dragging into the editor
+- **Auto-save**: Changes are saved when you click the save button
+
+```javascript
+// Drag and drop image handling
+mdEditor.addEventListener('drop', async (e) => {
+  const file = files[0];
+  
+  if (!file.type.startsWith('image/')) {
+    alert("Le fichier n'est pas une image.");
+    return;
+  }
+  
+  // Convert to base64 and save via API
+  const savedPath = await SaveImg(markdownImage);
+  const markdownFinal = `![image](${savedPath})`;
+  mdEditor.value = before + markdownFinal + after;
+});
+```
+
+<Warning>
+  Courses must have at least one chapter before students can enroll. The system prevents deletion of the last remaining chapter.
+</Warning>
+
+## Managing chapters
+
+Teachers can add and organize course chapters (`pages/addCourse.php:79-103`):
+
+### Adding chapters
+
+```php
+function AddChapter() {
+    global $db;
+    
+    // Create chapter record
+    $sql_chapter = 'INSERT INTO Chapitres (titre, cours_id) 
+                    VALUES ("Nouveau Chapitre", :cours_id)';
+    $request_chapter->execute();
+    $chapter_id = $db->lastInsertId();
+    
+    // Create markdown file
+    $file_path = '../md_files/' . $_GET['cours'] . '/' . $chapter_id . '.md';
+    file_put_contents($file_path, "# Nouveau chapitre : \n \n à vous de jouer !");
+    
+    // Update chapter with file path
+    $sqlUpdate = "UPDATE Chapitres SET fichier_url = :url WHERE id = :id";
+    $request_update->execute();
+}
+```
+
+### Chapter content format
+
+Chapter content is stored as markdown files with:
+
+- Unique file per chapter: `md_files/{course_id}/{chapter_id}.md`
+- Markdown formatting support (headings, lists, code blocks, images)
+- File path stored in database `Chapitres.fichier_url` column
+
+<Note>
+  Deleting a chapter removes both the database record and the associated markdown file from disk. This action cannot be undone.
+</Note>
+
+## API access for teachers
+
+Approved teachers receive an API key for programmatic course management (`api/index.php:1-381`):
+
+### Authentication
+
+Teachers access their API key through the API documentation page:
+
+```php
+// API token is stored in KeyTable and linked to user
+$sql = 'SELECT KeyTable.token FROM sessions 
+        INNER JOIN Utilisateurs ON Utilisateurs.id = sessions.user_id 
+        INNER JOIN KeyTable ON KeyTable.key_id = Utilisateurs.key_id 
+        WHERE sessions.token = :token';
+```
+
+### Available endpoints
+
+<CardGroup cols={2}>
+  <Card title="GetMd.php" icon="download">
+    Retrieve markdown content for a specific chapter
+  </Card>
+  <Card title="SaveMd.php" icon="floppy-disk">
+    Save markdown content to a chapter
+  </Card>
+  <Card title="UploadImage.php" icon="image">
+    Upload images and get file paths for markdown
+  </Card>
+  <Card title="NewCours.php" icon="plus">
+    Create a new course programmatically
+  </Card>
+  <Card title="NewChapter.php" icon="book-open">
+    Add new chapters to existing courses
+  </Card>
+</CardGroup>
+
+### API request example
+
+All API endpoints require authentication via the teacher's API token:
+
+```bash
+curl -X POST https://skillup.great-site.net/api/SaveMd.php \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "token=your_api_token_here" \
+  -d "chapter=13" \
+  -d "cours=12" \
+  --data-urlencode "markdown=# Chapitre 1 : Introduction"
+```
+
+<Warning>
+  API keys are sensitive credentials. Never share your API key or commit it to version control. You can regenerate your key from the API page if it becomes compromised.
+</Warning>
+
+## Regenerating API keys
+
+Teachers can regenerate their API key if compromised (`api/index.php:21-35`):
+
+```php
+if ($_SERVER["REQUEST_METHOD"] == "POST") {
+    $newtoken = generateToken();
+    
+    // Ensure token is unique
+    while(CheckToken($newtoken)) {
+        $newtoken = generateToken();
+    }
+    
+    // Update key in database
+    $sql = 'UPDATE Keytable SET token = :ntoken, 
+                                date_creation = :now 
+            WHERE token = :otoken';
+    $request->execute();
+}
+```
+
+<Note>
+  Regenerating your API key immediately invalidates the old key. Update all integrations with the new key to avoid disruptions.
+</Note>
+
+## Course deletion
+
+Teachers can delete their courses from the dashboard (`pages/dashboard.php:76-92`):
+
+```php
+if(isset($_POST["id"])) {
+    $sql_delete = "DELETE FROM Cours 
+                   WHERE id = :cid AND prof_id = :pid";
+    $request_delete = $db->prepare($sql_delete);
+    $request_delete->execute();
+    
+    if ($request_delete->rowCount() > 0) {
+        $_SESSION['message'] = 'Success';
+    }
+}
+```
+
+<Warning>
+  Deleting a course removes all associated data including chapters, enrollments, and student progress. This action is permanent and cannot be undone.
+</Warning>
+
+## Access control
+
+All teacher pages implement role-based access control (`pages/dashboard.php:16-19`):
+
+```php
+if($result['role'] != 'professeur') {
+    header('Location: connection.php');
+    exit();
+}
+```
+
+Teachers can only:
+- Edit courses they created (verified by `prof_id`)
+- Delete their own courses
+- Access their own API key
+- View statistics for their courses only
+
+## Related resources
+
+<CardGroup cols={2}>
+  <Card title="Student role" icon="graduation-cap" href="/roles/students">
+    Learn about student capabilities and course access
+  </Card>
+  <Card title="Administrator role" icon="user-shield" href="/roles/administrators">
+    Understand how administrators manage the platform
+  </Card>
+</CardGroup>

@@ -1,0 +1,628 @@
+---
+title: Deployment
+description: Deploy the SkillUp platform to production environments
+---
+
+## Overview
+
+This guide covers deploying SkillUp to a production environment, including security considerations, environment configuration, and best practices.
+
+<Warning>
+  Production deployments require careful attention to security. Never deploy with default configurations or DEBUG mode enabled.
+</Warning>
+
+## Pre-deployment checklist
+
+Before deploying to production, ensure you have:
+
+- [ ] A production server with PHP 8.0+ and MySQL 8.0+
+- [ ] SSL/TLS certificate for HTTPS
+- [ ] Secure database credentials
+- [ ] Backup strategy in place
+- [ ] Monitoring solution configured
+- [ ] Error logging configured
+
+## Production environment setup
+
+### PHP configuration
+
+<Steps>
+  <Step title="Update php.ini for production">
+    Modify your PHP configuration for production use:
+
+    ```ini php.ini
+    ; Display errors (turn off in production)
+    display_errors = Off
+    display_startup_errors = Off
+    
+    ; Log errors instead
+    log_errors = On
+    error_log = /var/log/php/error.log
+    
+    ; Security settings
+    expose_php = Off
+    
+    ; File upload limits
+    upload_max_filesize = 10M
+    post_max_size = 10M
+    
+    ; Session security
+    session.cookie_httponly = 1
+    session.cookie_secure = 1
+    session.use_strict_mode = 1
+    
+    ; Memory and execution
+    memory_limit = 256M
+    max_execution_time = 30
+    ```
+  </Step>
+
+  <Step title="Install required PHP extensions">
+    Ensure all necessary PHP extensions are installed:
+
+    ```bash
+    # Ubuntu/Debian
+    sudo apt update
+    sudo apt install php8.0-mysql php8.0-mbstring php8.0-xml php8.0-curl
+
+    # CentOS/RHEL
+    sudo yum install php-mysqlnd php-mbstring php-xml php-curl
+    ```
+  </Step>
+
+  <Step title="Verify installation">
+    Check installed extensions:
+
+    ```bash
+    php -m | grep -E 'pdo|mysql|mbstring'
+    ```
+  </Step>
+</Steps>
+
+### Database configuration
+
+<Steps>
+  <Step title="Create production database">
+    ```sql
+    CREATE DATABASE skillup CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+    ```
+  </Step>
+
+  <Step title="Create dedicated database user">
+    ```sql
+    CREATE USER 'skillup_user'@'localhost' IDENTIFIED BY 'strong_password_here';
+    GRANT SELECT, INSERT, UPDATE, DELETE ON skillup.* TO 'skillup_user'@'localhost';
+    FLUSH PRIVILEGES;
+    ```
+
+    <Warning>
+      Never use the root database user in production. Create a dedicated user with minimal required privileges.
+    </Warning>
+  </Step>
+
+  <Step title="Import database schema">
+    ```bash
+    mysql -u skillup_user -p skillup < assets/sql/skillup.sql
+    ```
+  </Step>
+
+  <Step title="Secure MySQL installation">
+    ```bash
+    sudo mysql_secure_installation
+    ```
+
+    Follow the prompts to:
+    - Set root password
+    - Remove anonymous users
+    - Disallow root login remotely
+    - Remove test database
+    - Reload privilege tables
+  </Step>
+</Steps>
+
+## Application configuration
+
+### Update config.php for production
+
+Edit `include/config.php` with production settings:
+
+```php include/config.php
+<?php
+// Global site configuration
+define('SITE_NAME', 'SkillUp');
+
+// Path configuration
+define('ASSETS_PATH', 'assets');
+define('IMG_PATH', ASSETS_PATH . '/images');
+define('CSS_PATH', ASSETS_PATH . '/css');
+define('JS_PATH', ASSETS_PATH . '/js');
+
+// Database configuration - PRODUCTION
+define('DB_HOST', 'localhost');
+define('DB_PORT', 3306);
+define('DB_USER', 'skillup_user');  // Dedicated database user
+define('DB_PASS', 'your_secure_password_here');
+define('DB_NAME', 'skillup');
+
+// CRITICAL: Set to false in production
+define('DEBUG', false);
+?>
+```
+
+<Warning>
+  Always set `DEBUG` to `false` in production. This prevents sensitive information like database errors and stack traces from being displayed to users.
+</Warning>
+
+### File permissions
+
+Set appropriate file permissions:
+
+```bash
+# Set owner (replace www-data with your web server user)
+sudo chown -R www-data:www-data /var/www/skillup
+
+# Set directory permissions
+find /var/www/skillup -type d -exec chmod 755 {} \;
+
+# Set file permissions
+find /var/www/skillup -type f -exec chmod 644 {} \;
+
+# Restrict config file access
+chmod 640 /var/www/skillup/include/config.php
+
+# Make writable directories (for uploads, logs)
+chmod 775 /var/www/skillup/assets/images
+chmod 775 /var/www/skillup/md_files
+```
+
+## Web server configuration
+
+### Apache
+
+<Steps>
+  <Step title="Create virtual host configuration">
+    Create `/etc/apache2/sites-available/skillup.conf`:
+
+    ```apache
+    <VirtualHost *:80>
+        ServerName skillup.example.com
+        ServerAdmin admin@example.com
+        DocumentRoot /var/www/skillup
+
+        <Directory /var/www/skillup>
+            Options -Indexes +FollowSymLinks
+            AllowOverride All
+            Require all granted
+        </Directory>
+
+        # Protect sensitive files
+        <FilesMatch "\.(sql|md|log|ini)$">
+            Require all denied
+        </FilesMatch>
+
+        # Protect config directory
+        <Directory /var/www/skillup/include>
+            Require all denied
+        </Directory>
+        <Directory /var/www/skillup/include>
+            <Files "*.php">
+                Require all granted
+            </Files>
+        </Directory>
+
+        ErrorLog ${APACHE_LOG_DIR}/skillup-error.log
+        CustomLog ${APACHE_LOG_DIR}/skillup-access.log combined
+    </VirtualHost>
+    ```
+  </Step>
+
+  <Step title="Enable SSL/HTTPS">
+    Create SSL virtual host `/etc/apache2/sites-available/skillup-ssl.conf`:
+
+    ```apache
+    <VirtualHost *:443>
+        ServerName skillup.example.com
+        ServerAdmin admin@example.com
+        DocumentRoot /var/www/skillup
+
+        SSLEngine on
+        SSLCertificateFile /etc/ssl/certs/skillup.crt
+        SSLCertificateKeyFile /etc/ssl/private/skillup.key
+        SSLCertificateChainFile /etc/ssl/certs/skillup-chain.crt
+
+        <Directory /var/www/skillup>
+            Options -Indexes +FollowSymLinks
+            AllowOverride All
+            Require all granted
+        </Directory>
+
+        # Security headers
+        Header always set X-Frame-Options "SAMEORIGIN"
+        Header always set X-Content-Type-Options "nosniff"
+        Header always set X-XSS-Protection "1; mode=block"
+        Header always set Referrer-Policy "strict-origin-when-cross-origin"
+
+        ErrorLog ${APACHE_LOG_DIR}/skillup-ssl-error.log
+        CustomLog ${APACHE_LOG_DIR}/skillup-ssl-access.log combined
+    </VirtualHost>
+    ```
+  </Step>
+
+  <Step title="Enable modules and site">
+    ```bash
+    # Enable required modules
+    sudo a2enmod rewrite
+    sudo a2enmod ssl
+    sudo a2enmod headers
+
+    # Enable sites
+    sudo a2ensite skillup.conf
+    sudo a2ensite skillup-ssl.conf
+
+    # Reload Apache
+    sudo systemctl reload apache2
+    ```
+  </Step>
+</Steps>
+
+### Nginx
+
+<Steps>
+  <Step title="Create server block">
+    Create `/etc/nginx/sites-available/skillup`:
+
+    ```nginx
+    server {
+        listen 80;
+        server_name skillup.example.com;
+        return 301 https://$server_name$request_uri;
+    }
+
+    server {
+        listen 443 ssl http2;
+        server_name skillup.example.com;
+        root /var/www/skillup;
+        index index.php index.html;
+
+        # SSL configuration
+        ssl_certificate /etc/ssl/certs/skillup.crt;
+        ssl_certificate_key /etc/ssl/private/skillup.key;
+        ssl_protocols TLSv1.2 TLSv1.3;
+        ssl_ciphers HIGH:!aNULL:!MD5;
+
+        # Security headers
+        add_header X-Frame-Options "SAMEORIGIN" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header X-XSS-Protection "1; mode=block" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+        # Logging
+        access_log /var/log/nginx/skillup-access.log;
+        error_log /var/log/nginx/skillup-error.log;
+
+        # Main location
+        location / {
+            try_files $uri $uri/ /index.php?$query_string;
+        }
+
+        # PHP processing
+        location ~ \.php$ {
+            fastcgi_pass unix:/var/run/php/php8.0-fpm.sock;
+            fastcgi_index index.php;
+            fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+            include fastcgi_params;
+        }
+
+        # Deny access to sensitive files
+        location ~ /\. {
+            deny all;
+        }
+
+        location ~ \.(sql|md|log|ini)$ {
+            deny all;
+        }
+
+        # Deny access to include directory except for PHP execution
+        location ^~ /include/ {
+            deny all;
+        }
+
+        # Allow static assets
+        location ~* \.(jpg|jpeg|png|gif|ico|css|js|svg|webp)$ {
+            expires 30d;
+            add_header Cache-Control "public, immutable";
+        }
+    }
+    ```
+  </Step>
+
+  <Step title="Enable site">
+    ```bash
+    sudo ln -s /etc/nginx/sites-available/skillup /etc/nginx/sites-enabled/
+    sudo nginx -t
+    sudo systemctl reload nginx
+    ```
+  </Step>
+</Steps>
+
+## Security hardening
+
+### Application security
+
+<Steps>
+  <Step title="Remove test files">
+    ```bash
+    rm /var/www/skillup/include/test.php
+    ```
+
+    <Warning>
+      Never leave test files accessible in production as they can expose database connection information.
+    </Warning>
+  </Step>
+
+  <Step title="Secure session handling">
+    The application uses session tokens stored in the database. Ensure the sessions table is regularly cleaned:
+
+    ```sql
+    -- Create a cron job to run this daily
+    DELETE FROM sessions WHERE expires_at < NOW();
+    ```
+  </Step>
+
+  <Step title="Implement rate limiting">
+    Add rate limiting to prevent brute force attacks on login endpoints using web server configuration or application middleware.
+  </Step>
+
+  <Step title="Configure API logging">
+    The `ApiLogs` table tracks API requests. Monitor this regularly:
+
+    ```sql
+    SELECT ip, COUNT(*) as requests, SUM(succes) as successful
+    FROM ApiLogs
+    WHERE date_heure > DATE_SUB(NOW(), INTERVAL 1 HOUR)
+    GROUP BY ip
+    HAVING requests > 100;
+    ```
+  </Step>
+</Steps>
+
+### Password security
+
+SkillUp uses PHP's `password_hash()` function with bcrypt:
+
+```php
+// Passwords are hashed with cost factor 10
+$hash = password_hash($password, PASSWORD_DEFAULT);
+```
+
+<Info>
+  The platform automatically uses bcrypt hashing (`$2y$10$`) for all passwords. This is visible in the database schema and provides strong password security.
+</Info>
+
+## SSL/TLS certificates
+
+### Using Let's Encrypt (recommended)
+
+<Steps>
+  <Step title="Install Certbot">
+    ```bash
+    # Ubuntu/Debian
+    sudo apt install certbot python3-certbot-apache
+    # or for Nginx
+    sudo apt install certbot python3-certbot-nginx
+    ```
+  </Step>
+
+  <Step title="Obtain certificate">
+    ```bash
+    # Apache
+    sudo certbot --apache -d skillup.example.com
+
+    # Nginx
+    sudo certbot --nginx -d skillup.example.com
+    ```
+  </Step>
+
+  <Step title="Auto-renewal">
+    ```bash
+    # Test renewal
+    sudo certbot renew --dry-run
+
+    # Certbot automatically sets up a cron job for renewal
+    ```
+  </Step>
+</Steps>
+
+## Monitoring and logging
+
+### Error logging
+
+Configure centralized error logging:
+
+```php
+// PHP errors are logged to system log when DEBUG is false
+// Configure in php.ini:
+error_log = /var/log/php/skillup-error.log
+```
+
+### Database monitoring
+
+Monitor database performance:
+
+```sql
+-- Check slow queries
+SHOW FULL PROCESSLIST;
+
+-- Monitor table sizes
+SELECT 
+    table_name,
+    round(((data_length + index_length) / 1024 / 1024), 2) as "Size (MB)"
+FROM information_schema.TABLES
+WHERE table_schema = 'skillup'
+ORDER BY (data_length + index_length) DESC;
+```
+
+### Access logging
+
+Web server access logs are configured in virtual host configuration:
+
+```bash
+# Apache
+tail -f /var/log/apache2/skillup-access.log
+
+# Nginx
+tail -f /var/log/nginx/skillup-access.log
+```
+
+## Backup strategy
+
+### Automated database backups
+
+Create a backup script `/usr/local/bin/backup-skillup.sh`:
+
+```bash
+#!/bin/bash
+BACKUP_DIR="/var/backups/skillup"
+DATE=$(date +%Y%m%d_%H%M%S)
+DB_NAME="skillup"
+DB_USER="skillup_user"
+DB_PASS="your_password"
+
+# Create backup directory if it doesn't exist
+mkdir -p $BACKUP_DIR
+
+# Dump database
+mysqldump -u $DB_USER -p$DB_PASS $DB_NAME | gzip > $BACKUP_DIR/skillup_db_$DATE.sql.gz
+
+# Backup files
+tar -czf $BACKUP_DIR/skillup_files_$DATE.tar.gz /var/www/skillup/assets/images /var/www/skillup/md_files
+
+# Remove backups older than 30 days
+find $BACKUP_DIR -name "*.gz" -mtime +30 -delete
+
+echo "Backup completed: $DATE"
+```
+
+Make it executable and add to cron:
+
+```bash
+sudo chmod +x /usr/local/bin/backup-skillup.sh
+
+# Add to crontab (daily at 2 AM)
+sudo crontab -e
+0 2 * * * /usr/local/bin/backup-skillup.sh >> /var/log/skillup-backup.log 2>&1
+```
+
+### File backups
+
+Backup user-generated content:
+
+```bash
+# Backup markdown files
+tar -czf skillup_md_$(date +%Y%m%d).tar.gz /var/www/skillup/md_files
+
+# Backup uploaded images
+tar -czf skillup_images_$(date +%Y%m%d).tar.gz /var/www/skillup/assets/images
+```
+
+## Production checklist
+
+Before going live, verify:
+
+- [ ] `DEBUG` is set to `false` in `config.php`
+- [ ] Test files removed (`include/test.php`)
+- [ ] HTTPS enabled with valid SSL certificate
+- [ ] Database using dedicated user (not root)
+- [ ] Strong database password set
+- [ ] File permissions configured correctly
+- [ ] Web server configured with security headers
+- [ ] Error logging configured and working
+- [ ] Backup system in place and tested
+- [ ] Monitoring solution active
+- [ ] Default admin password changed
+- [ ] Firewall configured (allow only 80, 443, 22)
+- [ ] Server and PHP updated to latest versions
+
+## Performance optimization
+
+### Enable opcode caching
+
+```ini php.ini
+opcache.enable=1
+opcache.memory_consumption=128
+opcache.interned_strings_buffer=8
+opcache.max_accelerated_files=10000
+opcache.revalidate_freq=2
+```
+
+### Database optimization
+
+```sql
+-- Add indexes for frequently queried columns
+CREATE INDEX idx_cours_categorie ON Cours(categorie_id);
+CREATE INDEX idx_chapitres_cours ON Chapitres(cours_id);
+CREATE INDEX idx_inscriptions_etudiant ON Inscriptions(etudiant_id);
+CREATE INDEX idx_sessions_user ON sessions(user_id);
+```
+
+### Enable compression
+
+```apache Apache
+# Enable mod_deflate
+<IfModule mod_deflate.c>
+    AddOutputFilterByType DEFLATE text/html text/plain text/xml text/css text/javascript application/javascript
+</IfModule>
+```
+
+```nginx Nginx
+# Enable gzip
+gzip on;
+gzip_vary on;
+gzip_types text/plain text/css text/xml text/javascript application/javascript application/json;
+```
+
+## Troubleshooting
+
+### Common issues
+
+<AccordionGroup>
+  <Accordion title="500 Internal Server Error">
+    - Check PHP error logs: `/var/log/php/skillup-error.log`
+    - Verify file permissions
+    - Ensure `.htaccess` is properly configured (Apache)
+    - Check web server error logs
+  </Accordion>
+
+  <Accordion title="Database connection failed">
+    - Verify database credentials in `config.php`
+    - Check MySQL is running: `sudo systemctl status mysql`
+    - Test connection: `mysql -u skillup_user -p skillup`
+    - Check database user privileges
+  </Accordion>
+
+  <Accordion title="403 Forbidden errors">
+    - Check file permissions
+    - Verify web server configuration
+    - Ensure document root is correct
+    - Check `.htaccess` rules (Apache)
+  </Accordion>
+
+  <Accordion title="Session issues">
+    - Verify session directory is writable
+    - Check `session.cookie_secure` in `php.ini` matches your HTTPS setup
+    - Clear expired sessions from database
+  </Accordion>
+</AccordionGroup>
+
+## Next steps
+
+- Set up monitoring and alerting
+- Configure automated backups to offsite storage
+- Implement a CDN for static assets
+- Set up staging environment for testing updates
+- Document your deployment process
+- Create disaster recovery plan
+
+<Note>
+  Regular maintenance is crucial for production systems. Schedule regular updates for PHP, MySQL, and the operating system. Always test updates in a staging environment first.
+</Note>

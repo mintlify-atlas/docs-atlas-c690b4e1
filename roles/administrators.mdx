@@ -1,0 +1,356 @@
+---
+title: Administrator role
+description: Learn about administrator privileges, user management, and platform oversight capabilities
+---
+
+Administrators have the highest level of access in the SkillUp platform. They are responsible for approving teacher requests, monitoring platform statistics, and managing overall system health.
+
+## Administrator dashboard
+
+The admin dashboard (`pages/admin.php:1-185`) provides a centralized interface for platform management:
+
+<Note>
+  Access to the admin dashboard is restricted to users with the `admin` flag set to `true` in the database. Unauthorized access attempts redirect to the home page.
+</Note>
+
+### Access control
+
+The admin dashboard implements strict authentication (`pages/admin.php:12-20`):
+
+```php
+$sql = 'SELECT Utilisateurs.id, Utilisateurs.prenom, Utilisateurs.admin 
+        FROM sessions 
+        INNER JOIN Utilisateurs ON Utilisateurs.id = sessions.user_id 
+        WHERE sessions.token = :token';
+
+if(!isset($result['admin']) || $result['admin'] == false) {
+    header('Location: ../index.php');
+    exit();
+}
+```
+
+## Platform statistics
+
+Administrators can monitor key platform metrics at a glance:
+
+<CardGroup cols={3}>
+  <Card title="Total users" icon="users-rectangle">
+    Count of all registered users on the platform
+  </Card>
+  <Card title="New users (7 days)" icon="user-plus">
+    Users who registered in the last 7 days
+  </Card>
+  <Card title="New courses (7 days)" icon="book-open">
+    Courses created in the last 7 days
+  </Card>
+</CardGroup>
+
+### Statistics functions
+
+The dashboard uses dedicated functions to calculate metrics (`pages/admin.php:63-90`):
+
+```php
+function getTotalUsers() {
+    global $db;
+    $sql = "SELECT COUNT(*) as total FROM Utilisateurs";
+    $request = $db->prepare($sql);
+    $request->execute();
+    $result = $request->fetch(PDO::FETCH_ASSOC);
+    return $result['total'];
+}
+
+function getNewUsers($days) {
+    global $db;
+    $sql = "SELECT COUNT(*) as total FROM Utilisateurs 
+            WHERE date_creation >= NOW() - INTERVAL :days DAY";
+    $request = $db->prepare($sql);
+    $request->bindParam(':days', $days, PDO::PARAM_INT);
+    $request->execute();
+    $result = $request->fetch(PDO::FETCH_ASSOC);
+    return $result['total'];
+}
+
+function getNewCourses($days) {
+    global $db;
+    $sql = "SELECT COUNT(*) as total FROM Cours 
+            WHERE date_creation >= NOW() - INTERVAL :days DAY";
+    $request = $db->prepare($sql);
+    $request->bindParam(':days', $days, PDO::PARAM_INT);
+    $request->execute();
+    $result = $request->fetch(PDO::FETCH_ASSOC);
+    return $result['total'];
+}
+```
+
+<Accordion title="How statistics are calculated">
+  The statistics use SQL aggregate functions with time-based filtering:
+  
+  - **Total users**: Simple `COUNT(*)` on the `Utilisateurs` table
+  - **Time-based metrics**: Use `NOW() - INTERVAL :days DAY` to filter records
+  - **Real-time data**: Statistics are calculated on each page load for accuracy
+</Accordion>
+
+## Managing teacher requests
+
+One of the primary responsibilities of administrators is reviewing and approving teacher applications.
+
+### Teacher request workflow
+
+<Steps>
+  <Step title="User submits request">
+    Students submit teacher requests through their profile with a presentation text
+  </Step>
+  <Step title="Request appears in admin dashboard">
+    The request is queued in the admin dashboard with a unique ID
+  </Step>
+  <Step title="Administrator reviews">
+    Admin reviews the user's presentation and decides to approve or reject
+  </Step>
+  <Step title="Action taken">
+    Admin clicks "Accepter" or "Refuser" to process the request
+  </Step>
+</Steps>
+
+### Viewing pending requests
+
+The admin dashboard displays all pending teacher requests (`pages/admin.php:148-183`):
+
+```php
+$sql_prof_requests = "SELECT DemandeProf.id, 
+                              DemandeProf.id_utilisateur, 
+                              DemandeProf.presentation 
+                      FROM DemandeProf";
+$request = $db->prepare($sql_prof_requests);
+$request->execute();
+$profRequests = $request->fetchAll(PDO::FETCH_ASSOC);
+```
+
+Each request shows:
+
+- **Request ID**: Unique identifier (displayed as "DEM-{id}")
+- **Presentation**: User's explanation of why they want to become a teacher
+- **Action buttons**: Accept or refuse the request
+
+<Note>
+  If there are no pending requests, the dashboard displays "Aucune demande en cours" to indicate the queue is empty.
+</Note>
+
+## Approving teachers
+
+When an administrator approves a teacher request, several actions occur (`pages/admin.php:36-61`):
+
+### Approval process
+
+```php
+function AddTeacher($user) {
+    global $db;
+    
+    // 1. Update user role to 'professeur'
+    $sql = "UPDATE Utilisateurs SET role = 'professeur' 
+            WHERE id = :id";
+    $request = $db->prepare($sql);
+    $request->bindParam(':id', $user);
+    $request->execute();
+    
+    // 2. Delete the teacher request
+    DeleteRequest($user);
+    
+    // 3. Generate API token for the new teacher
+    $token = generateToken();
+    $currentDate = date('Y-m-d H:i:s');
+    $sql = "INSERT INTO KeyTable (actif, token, date_creation) 
+            VALUES (true, :token, :date)";
+    $request = $db->prepare($sql);
+    $request->execute();
+    $keyId = $db->lastInsertId();
+    
+    // 4. Link API key to user account
+    $sql = 'UPDATE Utilisateurs SET key_id = :kid WHERE id = :id';
+    $request = $db->prepare($sql);
+    $request->execute();
+}
+```
+
+### What happens on approval
+
+<CardGroup cols={2}>
+  <Card title="Role upgrade" icon="user-graduate">
+    User's role changes from default to "professeur"
+  </Card>
+  <Card title="API key generation" icon="key">
+    A unique API token is created and linked to the user
+  </Card>
+  <Card title="Request cleanup" icon="trash">
+    The teacher request is removed from the queue
+  </Card>
+  <Card title="Dashboard access" icon="chalkboard-user">
+    User gains access to the teacher dashboard and tools
+  </Card>
+</CardGroup>
+
+<Warning>
+  Teacher approval is permanent and grants significant privileges. Ensure you review the user's presentation carefully before approving.
+</Warning>
+
+## Rejecting teacher requests
+
+Administrators can reject teacher requests if they don't meet criteria (`pages/admin.php:29-35`):
+
+```php
+function DeleteRequest($user) {
+    global $db;
+    $sql = "DELETE FROM DemandeProf WHERE id_utilisateur = :id";
+    $request = $db->prepare($sql);
+    $request->bindParam(':id', $user);
+    $request->execute();
+}
+```
+
+Rejecting a request:
+
+- Removes the entry from the `DemandeProf` table
+- Does not notify the user (they can submit a new request)
+- Does not change the user's role or permissions
+
+<Note>
+  Users whose requests are rejected can submit new teacher requests at any time through their profile page.
+</Note>
+
+## Request processing
+
+The admin dashboard handles both approval and rejection through a single form (`pages/admin.php:92-100`):
+
+```php
+if ($_SERVER["REQUEST_METHOD"] == "POST") {
+    if (isset($_POST['user']) && isset($_POST['action'])) {
+        if ($_POST['action'] == "1") {
+            // Approve the request
+            AddTeacher($_POST['user']);
+        } else {
+            // Reject the request
+            DeleteRequest($_POST['user']);
+        }
+    }
+}
+```
+
+The `action` parameter determines the outcome:
+
+- `action="1"`: Approve and grant teacher role
+- `action="0"`: Reject and delete request
+
+## Security features
+
+Administrators benefit from the same security measures as other users, plus additional protections:
+
+### Session management
+
+Admin sessions are validated using the same `IsConnected()` function (`include/sessionManager.php:4-35`):
+
+```php
+function IsConnected(): bool {
+    // Delete expired sessions on each check
+    $now = new DateTime();
+    $sql = "DELETE FROM sessions WHERE expires_at < :now";
+    $stmt->execute();
+    
+    // Validate cookie and session expiry
+    if (!isset($_COOKIE['user_token'])) {
+        return false;
+    }
+    
+    // Check session hasn't expired
+    $expires_at = new DateTime($result['expires_at']);
+    return $expires_at > $now;
+}
+```
+
+### API rate limiting
+
+While administrators don't directly use the API, the system implements rate limiting to protect all endpoints (`include/secureCheck.php:4-25`):
+
+```php
+function LogsCheck() {
+    $ip = GetIP();
+    $dateH_check = (new DateTime('-30 minutes'))->format('Y-m-d H:i:s');
+    
+    // Check for failed attempts in last 30 minutes
+    $sql = 'SELECT COUNT(ApiLogs.id) AS nb_denied 
+            FROM ApiLogs 
+            WHERE date_heure > :dateheure 
+              AND succes = FALSE 
+              AND ip = :ip';
+    
+    $result = $request->fetch(PDO::FETCH_ASSOC);
+    
+    // Block if more than 10 failed attempts
+    if ($result['nb_denied'] < 10) {
+        return true;
+    } else {
+        return false;
+    }
+}
+```
+
+<Warning>
+  IP addresses with more than 10 failed API requests in 30 minutes are automatically blocked. This protects against brute force attacks and abuse.
+</Warning>
+
+## Best practices for administrators
+
+To effectively manage the SkillUp platform:
+
+<CardGroup cols={2}>
+  <Card title="Regular monitoring" icon="chart-line">
+    Check the dashboard regularly to review growth metrics and identify trends
+  </Card>
+  <Card title="Prompt request review" icon="clock">
+    Process teacher requests in a timely manner to maintain user satisfaction
+  </Card>
+  <Card title="Quality control" icon="shield-check">
+    Review teacher presentations carefully to maintain platform quality
+  </Card>
+  <Card title="Security awareness" icon="lock">
+    Monitor for suspicious activity and maintain secure admin credentials
+  </Card>
+</CardGroup>
+
+### User management considerations
+
+When approving teachers, consider:
+
+- **Presentation quality**: Does the user demonstrate knowledge and commitment?
+- **Account age**: Is this a new account or an established user?
+- **Platform growth**: Are you maintaining a good student-to-teacher ratio?
+- **Content needs**: What topics or categories need more teachers?
+
+<Accordion title="What happens when a teacher account is compromised?">
+  If a teacher's account is compromised:
+  
+  1. The teacher can regenerate their API key from the API page
+  2. Administrators don't have direct tools to revoke teacher status
+  3. Consider implementing a manual role downgrade if needed
+  4. Monitor course creation and modification logs for suspicious activity
+</Accordion>
+
+## Limitations and future enhancements
+
+The current admin dashboard provides core functionality but could be enhanced with:
+
+- User search and filtering capabilities
+- Ability to directly manage user roles
+- Course moderation and approval workflow
+- Advanced analytics and reporting
+- Activity logs and audit trails
+- Email notifications for teacher requests
+
+## Related resources
+
+<CardGroup cols={2}>
+  <Card title="Student role" icon="graduation-cap" href="/roles/students">
+    Understand the student experience and capabilities
+  </Card>
+  <Card title="Teacher role" icon="chalkboard-user" href="/roles/teachers">
+    Learn about teacher features and course management
+  </Card>
+</CardGroup>

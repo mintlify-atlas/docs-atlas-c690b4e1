@@ -1,0 +1,356 @@
+---
+title: Database configuration
+description: Database setup and configuration for the SkillUp platform
+---
+
+## Overview
+
+SkillUp uses MySQL as its database management system. This guide covers the database schema, configuration, and connection management.
+
+## Database schema
+
+The SkillUp database consists of several interconnected tables that manage users, courses, content, and platform functionality.
+
+### Core tables
+
+#### Utilisateurs (Users)
+
+Stores user account information including students and professors:
+
+```sql
+CREATE TABLE IF NOT EXISTS `Utilisateurs` (
+  `id` int NOT NULL,
+  `prenom` varchar(15) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `nom` varchar(40) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `e_mail` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `mot_de_passe` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `avatar_url` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `role` enum('professeur','etudiant') CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'etudiant',
+  `date_creation` datetime DEFAULT NULL,
+  `admin` tinyint(1) NOT NULL DEFAULT '0',
+  `key_id` int DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+```
+
+<Note>
+  User roles are divided into `professeur` (professor) and `etudiant` (student). Professors can create and manage courses, while students can enroll in them.
+</Note>
+
+#### Cours (Courses)
+
+Manages course information:
+
+```sql
+CREATE TABLE IF NOT EXISTS `Cours` (
+  `id` int NOT NULL,
+  `nom` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `illustration_url` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `description` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci,
+  `categorie_id` int DEFAULT NULL,
+  `prof_id` int NOT NULL,
+  `date_creation` datetime DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+```
+
+#### Chapitres (Chapters)
+
+Stores individual course chapters and their content:
+
+```sql
+CREATE TABLE IF NOT EXISTS `Chapitres` (
+  `id` int NOT NULL,
+  `titre` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `fichier_url` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `cours_id` int DEFAULT NULL,
+  `date_creation` datetime DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+```
+
+<Info>
+  Chapters are stored as Markdown files referenced by `fichier_url`. The actual content is stored in the file system under the path structure `../md_files/{cours_id}/{chapter_id}.md`.
+</Info>
+
+#### Categories
+
+Organizes courses into categories:
+
+```sql
+CREATE TABLE IF NOT EXISTS `Categories` (
+  `id` int NOT NULL,
+  `nom` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `description` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci,
+  `date_creation` datetime DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+```
+
+Pre-populated categories include:
+- Développement Web
+- Cybersécurité
+- Intelligence Artificielle
+- Réseaux Informatiques
+- Base de Données
+- And more...
+
+### Supporting tables
+
+#### Sessions
+
+Manages user authentication sessions:
+
+```sql
+CREATE TABLE IF NOT EXISTS `sessions` (
+  `id` bigint UNSIGNED NOT NULL,
+  `user_id` int NOT NULL,
+  `token` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `expires_at` timestamp NOT NULL DEFAULT '0000-00-00 00:00:00'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+```
+
+#### Inscriptions
+
+Tracks student enrollment in courses:
+
+```sql
+CREATE TABLE IF NOT EXISTS `Inscriptions` (
+  `id` int NOT NULL,
+  `etudiant_id` int DEFAULT NULL,
+  `cours_id` int NOT NULL,
+  `date_inscription` timestamp NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+```
+
+#### Favoris (Favorites)
+
+Stores user's favorite courses:
+
+```sql
+CREATE TABLE IF NOT EXISTS`Favoris` (
+  `id` int NOT NULL,
+  `utilisateur_id` int NOT NULL,
+  `cours_id` int NOT NULL,
+  `date_ajout` datetime DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+```
+
+#### ApiLogs
+
+Logs API requests for monitoring and debugging:
+
+```sql
+CREATE TABLE IF NOT EXISTS `ApiLogs` (
+  `id` int NOT NULL,
+  `ip` varchar(45) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `succes` tinyint(1) NOT NULL DEFAULT '0',
+  `date_heure` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+```
+
+## Configuration
+
+Database configuration is centralized in the `include/config.php` file:
+
+```php include/config.php
+<?php
+// Global site configuration
+define('SITE_NAME', 'SkillUp');
+
+// Path configuration
+define('ASSETS_PATH', 'assets');
+define('IMG_PATH', ASSETS_PATH . '/images');
+define('CSS_PATH', ASSETS_PATH . '/css');
+define('JS_PATH', ASSETS_PATH . '/js');
+
+// Database configuration
+define('DB_HOST', 'localhost');  // Database host
+define('DB_PORT', 3306);         // Port (3306 by default for MySQL)
+define('DB_USER', 'root');       // Username
+define('DB_PASS', '');           // Password (MAMP = 'root', others = '')
+define('DB_NAME', 'skillup');    // Database name
+
+define('DEBUG', true); // If true, errors will be displayed on pages
+?>
+```
+
+### Configuration parameters
+
+| Parameter | Description | Example |
+|-----------|-------------|----------|
+| `DB_HOST` | Database server hostname or IP | `localhost`, `127.0.0.1`, `db.example.com` |
+| `DB_PORT` | MySQL port number | `3306` (default) |
+| `DB_USER` | Database username | `root`, `skillup_user` |
+| `DB_PASS` | Database password | Empty string or your password |
+| `DB_NAME` | Name of the database | `skillup` |
+| `DEBUG` | Enable/disable error display | `true` (dev), `false` (production) |
+
+<Warning>
+  Always set `DEBUG` to `false` in production environments. Displaying errors can expose sensitive information about your database structure and application logic.
+</Warning>
+
+## Database connection
+
+The `include/connectdb.php` file handles all database connections using PDO (PHP Data Objects):
+
+```php include/connectdb.php
+<?php
+require_once 'config.php';
+
+function connectDB() {
+    try {
+        $dsn = "mysql:host=" . DB_HOST . ";port=" . DB_PORT . ";dbname=" . DB_NAME . ";charset=utf8mb4";
+        $options = [
+            PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+            PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+            PDO::ATTR_EMULATE_PREPARES => false
+        ];
+        
+        return new PDO($dsn, DB_USER, DB_PASS, $options);
+    } catch (PDOException $e) {
+        if (DEBUG) {
+            afficheErreur($e);
+        } else {
+            echo "<p>Une erreur est survenue lors de la connexion aux données.</p>";
+        }
+        exit;
+    }
+}
+?>
+```
+
+### PDO configuration options
+
+The connection uses secure PDO options:
+
+- **`PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION`**: Throws exceptions on database errors for better error handling
+- **`PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC`**: Returns results as associative arrays
+- **`PDO::ATTR_EMULATE_PREPARES => false`**: Uses real prepared statements for better security
+- **`charset=utf8mb4`**: Supports full Unicode character set including emojis
+
+### Error handling
+
+When DEBUG mode is enabled, detailed error information is displayed:
+
+```php
+function afficheErreur($exception) {
+    // Displays formatted error page with:
+    // - Error message
+    // - Stack trace
+    // - Styled error container
+}
+```
+
+<Info>
+  The error display page is styled with CSS variables from your main stylesheet and provides detailed debugging information including the error message and stack trace.
+</Info>
+
+## Testing the connection
+
+Use the `include/test.php` script to verify your database configuration:
+
+```php include/test.php
+<?php
+// Test database connection
+require_once("./connectdb.php");
+
+$test = connectDB();
+```
+
+Access this file in your browser:
+
+```
+http://localhost/SkillUp/include/test.php
+```
+
+### Troubleshooting connection issues
+
+If you encounter connection errors:
+
+<Steps>
+  <Step title="Verify MySQL is running">
+    ```bash
+    # Linux/Mac
+    sudo systemctl status mysql
+    # or
+    sudo service mysql status
+
+    # Windows (in Services)
+    # Look for MySQL service
+    ```
+  </Step>
+
+  <Step title="Check credentials">
+    Verify your database username and password are correct:
+
+    ```bash
+    mysql -u root -p
+    ```
+
+    If you can log in, your credentials are correct.
+  </Step>
+
+  <Step title="Verify database exists">
+    ```sql
+    SHOW DATABASES;
+    ```
+
+    Ensure `skillup` database is listed.
+  </Step>
+
+  <Step title="Check user privileges">
+    ```sql
+    SHOW GRANTS FOR 'root'@'localhost';
+    ```
+
+    Ensure your user has necessary privileges on the skillup database.
+  </Step>
+
+  <Step title="Review error logs">
+    Check PHP error logs and MySQL error logs for specific error messages.
+  </Step>
+</Steps>
+
+## Database maintenance
+
+### Backup
+
+Regularly backup your database:
+
+```bash
+mysqldump -u root -p skillup > skillup_backup_$(date +%Y%m%d).sql
+```
+
+### Restore
+
+Restore from a backup:
+
+```bash
+mysql -u root -p skillup < skillup_backup_20250303.sql
+```
+
+### Optimize tables
+
+Periodically optimize tables for better performance:
+
+```sql
+OPTIMIZE TABLE Utilisateurs, Cours, Chapitres, Categories;
+```
+
+## Character encoding
+
+All tables use `utf8mb4` character set with `utf8mb4_unicode_ci` collation. This ensures:
+
+- Full Unicode support including emojis
+- Proper sorting for international characters
+- Compatibility with modern web applications
+
+<Note>
+  The `utf8mb4` character set is essential for storing modern content. Do not change this to `utf8` as it has limitations with certain characters.
+</Note>
+
+## Next steps
+
+Now that your database is configured:
+
+- [Deploy to production](/getting-started/deployment) - Learn how to deploy SkillUp securely
+- Review the API documentation to understand data access patterns
+- Set up automated backups for production environments

@@ -1,0 +1,275 @@
+---
+title: Clean images
+description: Remove unused images from a chapter based on markdown content
+---
+
+## Endpoint
+
+```http
+POST /api/CleanImg.php
+```
+
+Clean up unused images from a chapter by comparing the images referenced in the markdown content with the images stored in the chapter's images directory. This endpoint deletes images that are no longer referenced in the markdown.
+
+## Authentication
+
+This endpoint requires a valid authentication token and passes a logs check. The token must be included in the request body.
+
+<Warning>
+  Invalid or expired tokens will result in a 401 Unauthorized response. This endpoint also requires passing the LogsCheck() validation.
+</Warning>
+
+## Request parameters
+
+<ParamField body="token" type="string" required>
+  Authentication token obtained from login
+</ParamField>
+
+<ParamField body="markdown" type="string" required>
+  The current markdown content of the chapter. The endpoint will scan this content for image references.
+</ParamField>
+
+<ParamField body="chapter" type="string" required>
+  The chapter ID where images will be cleaned
+</ParamField>
+
+<ParamField body="cours" type="string" required>
+  The course ID that contains the chapter
+</ParamField>
+
+## Response
+
+<ResponseField name="success" type="boolean">
+  Indicates whether the cleanup operation was successful
+</ResponseField>
+
+<ResponseField name="message" type="string">
+  Summary of the cleanup operation (number of images kept/deleted)
+</ResponseField>
+
+<ResponseField name="error" type="string">
+  Error message if the request failed
+</ResponseField>
+
+## Response codes
+
+| Code | Description |
+|------|-------------|
+| 200  | Images cleaned successfully |
+| 401  | Invalid token or syntax error |
+
+## How it works
+
+The endpoint uses regex to extract image references from the markdown:
+
+```regex
+/!\[[^\]]*\]\((?:.*\/)?([a-zA-Z0-9_-]+)\.png\)/
+```
+
+This pattern matches markdown image syntax like:
+- `![alt text](123.png)`
+- `![alt text](path/to/123.png)`
+
+The endpoint then:
+1. Extracts all image IDs from the markdown
+2. Deletes database records for images NOT in the markdown
+3. Deletes physical PNG files NOT referenced in the markdown
+4. Returns a count of kept and deleted images
+
+## Error messages
+
+- `"Invalid or expired token"` - Authentication token is invalid or has expired
+- `"Syntax error in request. Please check the documentation and try again."` - Missing required parameters
+
+## Examples
+
+<Tabs>
+  <Tab title="cURL">
+    ```bash
+    curl -X POST https://yourdomain.com/api/CleanImg.php \
+      -H "Content-Type: application/x-www-form-urlencoded" \
+      -d "token=your_auth_token_here" \
+      -d "cours=123" \
+      -d "chapter=456" \
+      -d "markdown=# Chapter Title%0A%0A![diagram](789.png)%0A%0AMore content..."
+    ```
+  </Tab>
+  
+  <Tab title="PHP">
+    ```php
+    <?php
+    $url = 'https://yourdomain.com/api/CleanImg.php';
+    $markdown = <<<MD
+    # Chapter Title
+    
+    Here is an important diagram:
+    
+    ![diagram](789.png)
+    
+    And another image:
+    
+    ![screenshot](790.png)
+    
+    The rest of the content...
+    MD;
+
+    $data = [
+        'token' => 'your_auth_token_here',
+        'cours' => '123',
+        'chapter' => '456',
+        'markdown' => $markdown
+    ];
+
+    $options = [
+        'http' => [
+            'header'  => "Content-type: application/x-www-form-urlencoded\r\n",
+            'method'  => 'POST',
+            'content' => http_build_query($data)
+        ]
+    ];
+
+    $context  = stream_context_create($options);
+    $result = file_get_contents($url, false, $context);
+    $response = json_decode($result, true);
+
+    if ($response['success']) {
+        echo $response['message'];
+    }
+    ?>
+    ```
+  </Tab>
+  
+  <Tab title="JavaScript">
+    ```javascript
+    const markdown = `# Chapter Title
+
+Here is an important diagram:
+
+![diagram](789.png)
+
+And another image:
+
+![screenshot](790.png)
+
+The rest of the content...`;
+
+    const formData = new URLSearchParams();
+    formData.append('token', 'your_auth_token_here');
+    formData.append('cours', '123');
+    formData.append('chapter', '456');
+    formData.append('markdown', markdown);
+
+    fetch('https://yourdomain.com/api/CleanImg.php', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+      if (data.success) {
+        console.log(data.message);
+        // Example output: "2 Images Kept, 3 Images Deleted!"
+      }
+    });
+    ```
+  </Tab>
+</Tabs>
+
+## Success response examples
+
+<Tabs>
+  <Tab title="Some images deleted">
+    ```json
+    {
+      "success": true,
+      "message": "2 Images Kept, 3 Images Deleted!"
+    }
+    ```
+  </Tab>
+  
+  <Tab title="All images deleted">
+    ```json
+    {
+      "success": true,
+      "message": "All images deleted!"
+    }
+    ```
+  </Tab>
+  
+  <Tab title="No images found">
+    ```json
+    {
+      "success": true,
+      "message": "5 Images deleted!"
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Error response examples
+
+<Tabs>
+  <Tab title="Invalid token">
+    ```json
+    {
+      "error": "Invalid or expired token"
+    }
+    ```
+  </Tab>
+  
+  <Tab title="Syntax error">
+    ```json
+    {
+      "error": "Syntax error in request. Please check the documentation and try again."
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Database operations
+
+The endpoint performs the following database operation:
+
+```sql
+DELETE FROM Images 
+WHERE id_chapitre = :cid 
+AND id NOT IN ('789', '790', ...)
+```
+
+If no images are found in the markdown, it deletes all images for the chapter:
+
+```sql
+DELETE FROM Images WHERE id_chapitre = :cid
+```
+
+## File cleanup
+
+The endpoint scans the chapter's images directory:
+
+```text
+../md_files/{cours}/images/{chapter}/*.png
+```
+
+Any PNG files not referenced in the markdown are permanently deleted using `unlink()`.
+
+<Note>
+  This endpoint is typically called after saving markdown content to keep the images directory synchronized with the actual content.
+</Note>
+
+<Warning>
+  Deleted images cannot be recovered. Make sure the markdown content is accurate before calling this endpoint.
+</Warning>
+
+## Use cases
+
+1. **After editing content:** Call this endpoint after saving markdown to clean up orphaned images
+2. **Storage optimization:** Periodically clean images to free up disk space
+3. **Content migration:** Ensure only referenced images are kept when moving content
+
+## Best practices
+
+- Call this endpoint after every markdown save operation
+- Ensure the markdown parameter contains the complete, up-to-date content
+- Use this in combination with the SaveMd endpoint for automatic cleanup

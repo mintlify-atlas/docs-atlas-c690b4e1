@@ -1,0 +1,500 @@
+---
+title: Student enrollment
+description: Browse courses, enroll in programs, and track learning progress
+---
+
+## Overview
+
+The student enrollment system allows users to browse available courses, filter by category, view course details, and enroll in courses. The platform tracks views, enrollments, and provides personalized course recommendations.
+
+## Course discovery workflow
+
+Students can discover courses through multiple pathways.
+
+<Steps>
+  <Step title="Browse all courses">
+    Navigate to the formations page to see all available courses.
+  </Step>
+  
+  <Step title="Filter by category">
+    Use the category dropdown to filter courses by topic area.
+  </Step>
+  
+  <Step title="Search courses">
+    Enter keywords in the search bar to find specific courses.
+  </Step>
+  
+  <Step title="View course details">
+    Click on a course card to see the full course description and syllabus.
+  </Step>
+  
+  <Step title="Enroll in course">
+    Click the enrollment button to register for the course.
+  </Step>
+</Steps>
+
+## Course listing
+
+The formations page displays all available courses with filtering capabilities.
+
+### Query courses with filters
+
+From `pages/formations.php:16-51`:
+
+```php
+$categorie = isset($_GET['categorie']) ? intval($_GET['categorie']) : '';
+$recherche = isset($_GET['recherche']) ? $_GET['recherche'] : '';
+
+$requete = "SELECT c.id, c.nom, c.description, c.illustration_url, cat.nom as categorie_nom 
+            FROM Cours c 
+            LEFT JOIN Categories cat ON c.categorie_id = cat.id 
+            WHERE 1=1";
+$param = [];
+
+// Filter by "My Courses" (category ID 16)
+if (!empty($categorie) && $categorie == 16) {
+    if (IsConnected() && isset($_COOKIE['user_token'])) {
+        $requete = "SELECT c.id, c.nom, c.description, c.illustration_url, cat.nom as categorie_nom 
+                   FROM Cours c 
+                   LEFT JOIN Categories cat ON c.categorie_id = cat.id 
+                   INNER JOIN Inscriptions i ON c.id = i.cours_id 
+                   INNER JOIN sessions s ON i.etudiant_id = s.user_id 
+                   WHERE s.token = :token";
+        $param[':token'] = $_COOKIE['user_token'];
+    } else {
+        header("Location: connection.php");
+        exit;
+    }
+} elseif (!empty($categorie)) {
+    $requete .= " AND c.categorie_id = :categorie";
+    $param[':categorie'] = $categorie;
+}
+
+// Search by name or description
+if (!empty($recherche)) {
+    $requete .= " AND (c.nom LIKE :recherche_nom OR c.description LIKE :recherche_desc)";
+    $param[':recherche_nom'] = "%" . $recherche . "%";
+    $param[':recherche_desc'] = "%" . $recherche . "%";
+}
+
+$requete .= " ORDER BY c.date_creation DESC";
+
+$stmt = $db->prepare($requete);
+$stmt->execute($param);
+$resultat = $stmt->fetchAll(PDO::FETCH_ASSOC);
+```
+
+<Info>
+  Category ID 16 is a special filter that shows only courses the logged-in student has enrolled in.
+</Info>
+
+### Course card display
+
+Each course is displayed as a card with key information:
+
+```html
+<div class="course-card">
+    <div class="trending-image">
+        <?php if (!empty($row['illustration_url'])): ?>
+            <img src="<?php echo htmlspecialchars($row['illustration_url']); ?>" 
+                 alt="Illustration de <?php echo htmlspecialchars($row['nom']); ?>">
+        <?php else: ?>
+            <div class="no-image">
+                <span>Pas d'image</span>
+            </div>
+        <?php endif; ?>
+    </div>
+    <div class="course-content">
+        <div class="course-category">
+            <?php echo htmlspecialchars($row['categorie_nom'] ?? 'Non catégorisé'); ?>
+        </div>
+        <h2 class="course-title"><?php echo htmlspecialchars($row['nom']); ?></h2>
+        <p class="course-description">
+            <?php echo htmlspecialchars(substr($row['description'], 0, 100)) . 
+                      (strlen($row['description']) > 100 ? '...' : ''); ?>
+        </p>
+        <a href="detail.php?id=<?php echo $row['id']; ?>" class="trending-link">Voir le cours</a>
+    </div>
+</div>
+```
+
+### Search functionality
+
+The search form allows students to find courses:
+
+```html
+<div class="search-container">
+    <form action="formations.php" method="get">
+        <input type="text" name="recherche" 
+               placeholder="Rechercher une formation..." 
+               value="<?php echo htmlspecialchars($recherche); ?>">
+        <button type="submit">Rechercher</button>
+    </form>
+</div>
+```
+
+### Category filter
+
+```html
+<div class="filters">
+    <form action="formations.php" method="get">
+        <?php if (!empty($recherche)): ?>
+            <input type="hidden" name="recherche" 
+                   value="<?php echo htmlspecialchars($recherche); ?>">
+        <?php endif; ?>
+        <select name="categorie" onchange="this.form.submit()">
+            <option value="">Toutes les catégories</option>
+            <?php foreach ($categories as $cat): ?>
+                <option value="<?php echo $cat['id']; ?>" 
+                        <?php echo ($categorie == $cat['id']) ? 'selected' : ''; ?>>
+                    <?php echo htmlspecialchars($cat['nom']); ?>
+                </option>
+            <?php endforeach; ?>
+        </select>
+    </form>
+</div>
+```
+
+## Course detail page
+
+The detail page shows comprehensive course information and enrollment options.
+
+### Fetch course details
+
+From `pages/detail.php:13-48`:
+
+```php
+$stmt_cours = $db->prepare("SELECT c.id, c.nom, c.description, c.illustration_url, c.prof_id, 
+                           u.prenom, u.nom as nom_prof, 
+                           cat.nom as categorie_nom 
+                           FROM Cours c
+                           LEFT JOIN Utilisateurs u ON c.prof_id = u.id
+                           LEFT JOIN Categories cat ON c.categorie_id = cat.id
+                           WHERE c.id = :id");
+$stmt_cours->bindParam(':id', $id_cours, PDO::PARAM_INT);
+$stmt_cours->execute();
+$formation = $stmt_cours->fetch(PDO::FETCH_ASSOC);
+
+if (!$formation) {
+    header("Location: formations.php");
+    exit();
+}
+
+// Get likes count
+$stmt_likes = $db->prepare("SELECT COUNT(*) as total FROM Favoris WHERE cours_id = :id");
+$stmt_likes->bindParam(':id', $id_cours, PDO::PARAM_INT);
+$stmt_likes->execute();
+$likes = $stmt_likes->fetch(PDO::FETCH_ASSOC);
+$formation['likes'] = $likes['total'];
+
+// Get views count
+$stmt_vues = $db->prepare("SELECT COUNT(*) as total FROM Vues WHERE cours_id = :id");
+$stmt_vues->bindParam(':id', $id_cours, PDO::PARAM_INT);
+$stmt_vues->execute();
+$vues = $stmt_vues->fetch(PDO::FETCH_ASSOC);
+$formation['vues'] = $vues['total'];
+
+// Get chapters count
+$stmt_chapitres = $db->prepare("SELECT COUNT(*) as total FROM Chapitres WHERE cours_id = :id");
+$stmt_chapitres->bindParam(':id', $id_cours, PDO::PARAM_INT);
+$stmt_chapitres->execute();
+$chapitres_count = $stmt_chapitres->fetch(PDO::FETCH_ASSOC);
+$nb_chapitres = $chapitres_count['total'];
+```
+
+### Track course views
+
+The system automatically tracks when users view courses from `pages/detail.php:50-95`:
+
+<Tabs>
+  <Tab title="Authenticated users">
+    ```php
+    if (IsConnected()) {
+        $sql = 'SELECT id FROM Utilisateurs WHERE id = 
+                (SELECT user_id FROM sessions WHERE token = :token)';
+        $request = $db->prepare($sql);
+        $request->bindParam(':token', $_COOKIE['user_token']);
+        $request->execute();
+        $user = $request->fetch(PDO::FETCH_ASSOC);
+
+        if ($user) {
+            // Check if view already exists
+            $check_vue = $db->prepare("SELECT id FROM Vues 
+                                       WHERE utilisateur_id = :user_id 
+                                       AND cours_id = :cours_id");
+            $check_vue->bindParam(':user_id', $user['id'], PDO::PARAM_INT);
+            $check_vue->bindParam(':cours_id', $id_cours, PDO::PARAM_INT);
+            $check_vue->execute();
+
+            // Create view if it doesn't exist
+            if ($check_vue->rowCount() == 0) {
+                $stmt_vue = $db->prepare("INSERT INTO Vues 
+                                          (utilisateur_id, cours_id, date_vue) 
+                                          VALUES (:user_id, :cours_id, NOW())");
+                $stmt_vue->bindParam(':user_id', $user['id'], PDO::PARAM_INT);
+                $stmt_vue->bindParam(':cours_id', $id_cours, PDO::PARAM_INT);
+                $stmt_vue->execute();
+            }
+        }
+    }
+    ```
+  </Tab>
+  
+  <Tab title="Anonymous users">
+    ```php
+    else {
+        $ip_address = $_SERVER['REMOTE_ADDR'];
+        
+        // Check if IP already viewed this course
+        $check_ip_vue = $db->prepare("SELECT id FROM Vues 
+                                      WHERE ip_address = :ip 
+                                      AND cours_id = :cours_id 
+                                      AND utilisateur_id IS NULL");
+        $check_ip_vue->bindParam(':ip', $ip_address, PDO::PARAM_STR);
+        $check_ip_vue->bindParam(':cours_id', $id_cours, PDO::PARAM_INT);
+        $check_ip_vue->execute();
+
+        // Create view for this IP if it doesn't exist
+        if ($check_ip_vue->rowCount() == 0) {
+            $stmt_ip_vue = $db->prepare("INSERT INTO Vues 
+                                         (ip_address, cours_id, date_vue) 
+                                         VALUES (:ip, :cours_id, NOW())");
+            $stmt_ip_vue->bindParam(':ip', $ip_address, PDO::PARAM_STR);
+            $stmt_ip_vue->bindParam(':cours_id', $id_cours, PDO::PARAM_INT);
+            $stmt_ip_vue->execute();
+        }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+<Note>
+  Views are deduplicated: each user (or IP address for anonymous users) can only add one view per course.
+</Note>
+
+## Course enrollment
+
+Students can enroll in courses from the detail page.
+
+### Check enrollment status
+
+From `pages/detail.php:99-115`:
+
+```php
+$is_inscrit = false;
+if (IsConnected()) {
+    $sql = 'SELECT id FROM Utilisateurs WHERE id = 
+            (SELECT user_id FROM sessions WHERE token = :token)';
+    $request = $db->prepare($sql);
+    $request->bindParam(':token', $_COOKIE['user_token']);
+    $request->execute();
+    $user = $request->fetch(PDO::FETCH_ASSOC);
+
+    if ($user) {
+        $stmt_inscrit = $db->prepare("SELECT id FROM Inscriptions 
+                                      WHERE etudiant_id = :user_id 
+                                      AND cours_id = :cours_id");
+        $stmt_inscrit->bindParam(':user_id', $user['id'], PDO::PARAM_INT);
+        $stmt_inscrit->bindParam(':cours_id', $id_cours, PDO::PARAM_INT);
+        $stmt_inscrit->execute();
+        $is_inscrit = $stmt_inscrit->rowCount() > 0;
+    }
+}
+```
+
+### Process enrollment
+
+From `pages/detail.php:118-142`:
+
+```php
+if (isset($_POST['inscription']) && IsConnected()) {
+    $sql = 'SELECT id FROM Utilisateurs WHERE id = 
+            (SELECT user_id FROM sessions WHERE token = :token)';
+    $request = $db->prepare($sql);
+    $request->bindParam(':token', $_COOKIE['user_token']);
+    $request->execute();
+    $user = $request->fetch(PDO::FETCH_ASSOC);
+
+    if ($user && !$is_inscrit) {
+        // Add enrollment
+        $stmt_inscription = $db->prepare("INSERT INTO Inscriptions 
+                                          (etudiant_id, cours_id) 
+                                          VALUES (:user_id, :cours_id)");
+        $stmt_inscription->bindParam(':user_id', $user['id'], PDO::PARAM_INT);
+        $stmt_inscription->bindParam(':cours_id', $id_cours, PDO::PARAM_INT);
+        $stmt_inscription->execute();
+
+        // Add view entry
+        $stmt_vue = $db->prepare("INSERT INTO Vues 
+                                  (utilisateur_id, cours_id) 
+                                  VALUES (:user_id, :cours_id)");
+        $stmt_vue->bindParam(':user_id', $user['id'], PDO::PARAM_INT);
+        $stmt_vue->bindParam(':cours_id', $id_cours, PDO::PARAM_INT);
+        $stmt_vue->execute();
+
+        // Redirect to avoid form resubmission
+        header("Location: detail.php?id=" . $id_cours);
+        exit();
+    }
+}
+```
+
+### Enrollment UI
+
+The enrollment button changes based on user state:
+
+```php
+<section class="course-actions">
+    <?php if (!$is_inscrit && $nb_chapitres > 0): ?>
+        <form method="POST">
+            <?php if (IsConnected()): ?>
+                <button type="submit" name="inscription" class="enroll-button">
+                    S'inscrire au cours
+                </button>
+            <?php else: ?>
+                <a href="connection.php" class="enroll-button">
+                    Se connecter pour s'inscrire
+                </a>
+            <?php endif; ?>
+        </form>
+    <?php elseif ($is_inscrit && $nb_chapitres > 0): ?>
+        <a href="course_viewer.php?id=<?php echo $id_cours; ?>" class="view-course-button">
+            Consulter le cours
+        </a>
+    <?php elseif ($nb_chapitres == 0): ?>
+        <div>
+            <p>Ce cours ne contient pas encore de chapitres.</p>
+        </div>
+    <?php endif; ?>
+</section>
+```
+
+<Accordion title="Enrollment button states">
+  - **Not enrolled + has chapters**: Shows "S'inscrire au cours" button
+  - **Not logged in**: Shows "Se connecter pour s'inscrire" link
+  - **Already enrolled**: Shows "Consulter le cours" link
+  - **No chapters**: Shows informational message that course is incomplete
+</Accordion>
+
+## Course information display
+
+The detail page shows comprehensive course metrics:
+
+```html
+<section class="info">
+    <ul>
+        <li>
+            <!-- Clock icon -->
+            <span><?php echo $nb_chapitres; ?> chapitre(s)</span>
+        </li>
+        <li>
+            <!-- Heart icon -->
+            <span><?php echo $formation['likes']; ?> J'aime</span>
+        </li>
+        <li>
+            <!-- Eye icon -->
+            <span><?php echo $formation['vues']; ?> vues</span>
+        </li>
+    </ul>
+</section>
+```
+
+## Categories page
+
+Students can explore courses by browsing all available categories.
+
+### Fetch categories
+
+From `pages/categories.php:9-16`:
+
+```php
+$query = "SELECT * FROM categories";
+
+$stmt = $db->prepare($query);
+$stmt->execute();
+
+$categories = $stmt->fetchAll(PDO::FETCH_ASSOC);
+```
+
+### Display category grid
+
+```html
+<section class="grid-container">
+    <?php foreach ($categories as $categorie): ?>
+        <div class="category">
+            <a href="../pages/formations.php?categorie=<?php echo htmlspecialchars($categorie['id']); ?>">
+                <h2><?php echo htmlspecialchars($categorie['nom']); ?></h2>
+            </a>
+            <p><?php echo htmlspecialchars($categorie['description']); ?></p>
+        </div>
+    <?php endforeach; ?>
+</section>
+```
+
+## Database schema
+
+### Inscriptions table
+
+```sql
+CREATE TABLE Inscriptions (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    etudiant_id INT NOT NULL,
+    cours_id INT NOT NULL,
+    date_inscription DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (etudiant_id) REFERENCES Utilisateurs(id) ON DELETE CASCADE,
+    FOREIGN KEY (cours_id) REFERENCES Cours(id) ON DELETE CASCADE,
+    UNIQUE KEY unique_enrollment (etudiant_id, cours_id)
+);
+```
+
+### Vues table
+
+```sql
+CREATE TABLE Vues (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    utilisateur_id INT NULL,
+    cours_id INT NOT NULL,
+    ip_address VARCHAR(45) NULL,
+    date_vue DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (utilisateur_id) REFERENCES Utilisateurs(id) ON DELETE CASCADE,
+    FOREIGN KEY (cours_id) REFERENCES Cours(id) ON DELETE CASCADE
+);
+```
+
+### Favoris table
+
+```sql
+CREATE TABLE Favoris (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    utilisateur_id INT NOT NULL,
+    cours_id INT NOT NULL,
+    date_ajout DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (utilisateur_id) REFERENCES Utilisateurs(id) ON DELETE CASCADE,
+    FOREIGN KEY (cours_id) REFERENCES Cours(id) ON DELETE CASCADE,
+    UNIQUE KEY unique_favorite (utilisateur_id, cours_id)
+);
+```
+
+## User experience flows
+
+<Steps>
+  <Step title="Guest user browsing">
+    Anonymous users can browse courses, search, filter by category, and view course details. Views are tracked by IP address.
+  </Step>
+  
+  <Step title="Registration prompt">
+    When attempting to enroll, guests are redirected to the connection page to create an account.
+  </Step>
+  
+  <Step title="Student enrollment">
+    Logged-in students can enroll in courses with a single click. The enrollment is recorded immediately.
+  </Step>
+  
+  <Step title="Course access">
+    After enrollment, students can access the course viewer to read chapters and track progress.
+  </Step>
+</Steps>
+
+<Warning>
+  Students cannot enroll in courses that have no chapters. Professors must add at least one chapter before students can enroll.
+</Warning>

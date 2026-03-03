@@ -1,0 +1,504 @@
+---
+title: Course management
+description: Create, edit, and manage courses with chapters and markdown content
+---
+
+## Overview
+
+The course management system allows professors to create courses, add chapters, edit content using markdown, and manage course metadata. The system features a real-time markdown editor with preview capabilities.
+
+## Course creation workflow
+
+Professors can create new courses through the dashboard interface.
+
+<Steps>
+  <Step title="Navigate to dashboard">
+    From the professor dashboard at `pages/dashboard.php`, click the "Nouveau cours" button.
+  </Step>
+  
+  <Step title="Initialize course">
+    The system creates a new course with default values and redirects to the course editor.
+  </Step>
+  
+  <Step title="Create initial chapter">
+    A demo chapter is automatically created with a markdown file.
+  </Step>
+  
+  <Step title="Customize course">
+    Edit the course name, description, category, and cover image.
+  </Step>
+  
+  <Step title="Add content">
+    Create additional chapters and write course content using the markdown editor.
+  </Step>
+</Steps>
+
+### New course initialization
+
+When creating a new course (ID `00000` triggers creation), the system from `pages/addCourse.php:27-60`:
+
+```php
+if($_GET['cours'] == "00000"){ //new course
+    $sql_new = 'INSERT INTO Cours (nom, illustration_url, description, prof_id) 
+    VALUES ("Nouveau cours", "https://remyweb.fr/images/1361465141845032960.webp", 
+            "Entrez votre description", :prof)';
+    $request_new = $db->prepare($sql_new);
+    $request_new->bindParam(':prof', $result['id']);
+    $request_new->execute();
+    $idCours = $db->lastInsertId(); 
+    
+    // Add initial chapter
+    $sql_chapter = 'INSERT INTO Chapitres (titre, cours_id) 
+                    VALUES ("Chapitre 1 : demo", :cours_id)';
+    $request_chapter = $db->prepare($sql_chapter);
+    $request_chapter->bindParam(':cours_id', $idCours);
+    $request_chapter->execute();
+    $chapter_id = $db->lastInsertId();
+    
+    // Create markdown file
+    $dir_path = '../md_files/' . $idCours;
+    $file_path = $dir_path . '/' . $chapter_id . '.md';
+    
+    if (!file_exists($dir_path)) {
+        mkdir($dir_path, 0777, true); 
+    }
+    
+    if (!file_exists($file_path)) {
+        $init_content = "# Chapitre 1 : \n \n à vous de jouer !";
+        file_put_contents($file_path, $init_content); 
+    }
+
+    $sqlUpdate = "UPDATE Chapitres SET fichier_url = :url WHERE id = :id";
+    $request_update = $db->prepare($sqlUpdate);
+    $request_update->bindParam(":url", $file_path);
+    $request_update->bindParam(":id", $chapter_id);
+    $request_update->execute();
+
+    header('Location: addCourse.php?cours=' . $idCours);
+    exit();
+}
+```
+
+<Info>
+  Each course gets its own directory under `md_files/` to organize chapter content files.
+</Info>
+
+## Course metadata management
+
+Professors can update course information including name, category, and description.
+
+### Update course name and category
+
+From `pages/addCourse.php:62-70`:
+
+```php
+function ChangeName($name, $cat) {
+    global $db;
+    $sql = "UPDATE Cours SET Cours.nom = :name, Cours.categorie_id = :categorie 
+            WHERE Cours.id = :id";
+    $request = $db->prepare($sql);
+    $request->bindParam(":name", $name);
+    $request->bindParam(":categorie", $cat);
+    $request->bindParam(":id", $_GET['cours']);
+    $request->execute();
+}
+```
+
+### Update course description
+
+From `pages/addCourse.php:71-78`:
+
+```php
+function ChangeDescription($description) {
+    global $db;
+    $sql = "UPDATE Cours SET Cours.description = :des WHERE Cours.id = :id";
+    $request = $db->prepare($sql);
+    $request->bindParam(":des", $description);
+    $request->bindParam(":id", $_GET['cours']);
+    $request->execute();
+}
+```
+
+### UI for course metadata
+
+The course editor provides inline editing with form submissions:
+
+```html
+<div class="cours-primary-infos">
+    <button id="generatePopup" onclick="OpenAvatarPopup()">
+        <img src="<?php echo $result_check['illustration_url'] ?>" alt="Course cover" class="avatar"/>
+    </button>
+    <div>
+        <form method="POST" class="row">
+            <div>
+                <input class="f-name" name="name" type="text" maxlength="255" 
+                       value="<?php echo $result_check['nom']?>" required>
+                <select name="categorie" id="categorie">
+                    <?php
+                        foreach ($categories as $category) {
+                            $selected = '';
+                            if (!empty($result_check['categorie_id']) && 
+                                $result_check['categorie_id'] == $category['id']) {
+                                $selected = 'selected';
+                            }
+                            echo '<option value="' . $category['id'] . '" ' . $selected . '>' . 
+                                 $category['nom'] . '</option>';
+                        }
+                    ?>
+                </select>
+            </div>
+            <button type="submit" name="change-name">
+                <!-- Edit icon SVG -->
+            </button>
+        </form>
+    </div>
+</div>
+```
+
+## Chapter management
+
+Courses are organized into chapters, each with its own markdown content file.
+
+### Add new chapter
+
+From `pages/addCourse.php:79-103`:
+
+```php
+function AddChapter() {
+    global $db;
+    $sql_chapter = 'INSERT INTO Chapitres (titre, cours_id) 
+                    VALUES ("Nouveau Chapitre", :cours_id)';
+    $request_chapter = $db->prepare($sql_chapter);
+    $request_chapter->bindParam(':cours_id', $_GET['cours']);
+    $request_chapter->execute();
+    $chapter_id = $db->lastInsertId();
+    
+    $dir_path = '../md_files/' . $_GET['cours'];
+    $file_path = $dir_path . '/' . $chapter_id . '.md';
+    
+    if (!file_exists($dir_path)) {
+        mkdir($dir_path, 0777, true); 
+    }
+    
+    if (!file_exists($file_path)) {
+        $init_content = "# Nouveau chapitre : \n \n à vous de jouer !";
+        file_put_contents($file_path, $init_content); 
+    }
+
+    $sqlUpdate = "UPDATE Chapitres SET fichier_url = :url WHERE id = :id";
+    $request_update = $db->prepare($sqlUpdate);
+    $request_update->bindParam(":url", $file_path);
+    $request_update->bindParam(":id", $chapter_id);
+    $request_update->execute();
+}
+```
+
+### Update chapter title
+
+From `pages/addCourse.php:114-121`:
+
+```php
+function ChangeChapName($chapName) {
+    global $db;
+    $sql = "UPDATE Chapitres SET Chapitres.titre = :newt WHERE Chapitres.id = :id";
+    $request = $db->prepare($sql);
+    $request->bindParam(":newt", $chapName);
+    $request->bindParam(":id", $_COOKIE['activeChapId']);
+    $request->execute();
+}
+```
+
+### Delete chapter
+
+From `pages/addCourse.php:122-138`:
+
+```php
+function DeleteChap(){
+    global $db;
+    $sql = "DELETE FROM Chapitres WHERE id = :id ";
+    $request = $db->prepare($sql);
+    $request->bindParam(":id", $_COOKIE['activeChapId']);
+    $request->execute();
+    
+    // Delete markdown file
+    $path = "../md_files/". $_GET['cours'] . '/'. $_COOKIE['activeChapId'] . '.md';
+    if (file_exists($path)) {
+        if (!unlink($path)) {
+            header('Location: dashboard.php');
+        }
+    }
+    
+    // Remove cookie
+    setcookie("activeChapId", "", time() - 3600, "./");
+    header('Location: addCourse.php?cours=' . $_GET['cours']);
+    exit();
+}
+```
+
+<Warning>
+  Deleting a chapter permanently removes both the database record and the markdown file. This action cannot be undone.
+</Warning>
+
+## Markdown editor
+
+The course editor features a real-time markdown editor with preview capabilities.
+
+### Save markdown content
+
+From `pages/addCourse.php:104-112`:
+
+```php
+function UpdateMd($md) {
+    $file_path = "../md_files/" . $_GET['cours'] . "/" . $_COOKIE['activeChapId'] . ".md";
+    if (file_exists($file_path)) {
+        file_put_contents($file_path, $md);
+    } else {
+        header("Location: dashboard.php");
+        exit;
+    }
+}
+```
+
+### Editor interface
+
+The editor provides formatting tools and live preview:
+
+<Tabs>
+  <Tab title="Edit mode">
+    ```html
+    <div class="edit" id="edit">
+        <div class="tool-bar">
+            <div class="button-container">
+                <button onclick="AddToMd('*Gras*')">
+                    <!-- Bold icon -->
+                </button>
+                <button onclick="AddToMd('_Italic_')">
+                    <!-- Italic icon -->
+                </button>
+                <button onclick="AddToMd('# ')">
+                    <!-- H1 icon -->
+                </button>
+                <button onclick="AddToMd('## ')">
+                    <!-- H2 icon -->
+                </button>
+                <button onclick="AddToMd('### ')">
+                    <!-- H3 icon -->
+                </button>
+            </div>
+        </div>
+        <div class="text-editor">
+            <textarea id="md-editor" name="md-editor"></textarea>
+            <div id="md" value=""></div>
+        </div>
+    </div>
+    ```
+  </Tab>
+  
+  <Tab title="Preview mode">
+    ```html
+    <div id="preview" class="preview">
+        <div id="md-output">
+            <!-- Rendered markdown appears here -->
+        </div>
+    </div>
+    ```
+  </Tab>
+</Tabs>
+
+### Image upload via drag and drop
+
+The editor supports drag-and-drop image uploads from `pages/addCourse.php:428-469`:
+
+```javascript
+mdEditor.addEventListener('drop', async (e) => {
+  e.preventDefault();
+  mdEditor.style.border = "3px";
+  const files = e.dataTransfer.files;
+  if (!files.length) return;
+  const file = files[0];
+
+  if (!file.type.startsWith('image/')) {
+    alert("Le fichier n'est pas une image. \n Veuillez entrer une image valide");
+    return;
+  }
+
+  const reader = new FileReader();
+  reader.onload = async function () {
+    const base64 = reader.result; 
+    const markdownImage = `![image](${base64})`;
+
+    const savedPath = await SaveImg(markdownImage);
+
+    if (savedPath) {
+      const cursorPos = mdEditor.selectionStart;
+      const before = mdEditor.value.substring(0, cursorPos);
+      const after = mdEditor.value.substring(cursorPos);
+      const markdownFinal = `![image](${savedPath})`;
+      mdEditor.value = before + markdownFinal + after;
+    } else {
+      alert("Erreur lors de la sauvegarde de l'image.");
+    }
+  };
+
+  reader.readAsDataURL(file);
+});
+```
+
+<Note>
+  Images are converted to base64 and then saved to the server, with the path inserted into the markdown.
+</Note>
+
+## Professor dashboard
+
+The dashboard provides an overview of all courses and statistics.
+
+### Course statistics
+
+From `pages/dashboard.php:29-36`:
+
+```php
+$sql_prof = 'SELECT COUNT(DISTINCT Inscriptions.id) AS nb_inscription, 
+                    COUNT(DISTINCT Vues.id) AS nb_vues, 
+                    COUNT(DISTINCT Favoris.id) AS nb_likes 
+             FROM Utilisateurs 
+             INNER JOIN Cours ON Utilisateurs.id = Cours.prof_id 
+             LEFT JOIN Inscriptions ON Cours.id = Inscriptions.cours_id 
+             LEFT JOIN Vues ON Cours.id = Vues.cours_id 
+             LEFT JOIN Favoris ON Cours.id = Favoris.cours_id 
+             WHERE Utilisateurs.e_mail = :email';
+```
+
+### Course list display
+
+The dashboard shows all courses with their metrics from `pages/dashboard.php:69-74`:
+
+```php
+$sql_courses = "SELECT Cours.id, Cours.nom, Cours.illustration_url, Cours.description, 
+                       Categories.nom AS 'cat_nom', 
+                       COUNT(Vues.id) AS 'Vues', 
+                       COUNT(Inscriptions.id) AS 'Inscrits', 
+                       COUNT(Favoris.id) AS 'like' 
+                FROM Cours 
+                INNER JOIN Utilisateurs ON Cours.prof_id = Utilisateurs.id 
+                LEFT JOIN Vues ON Cours.id = Vues.cours_id 
+                LEFT JOIN Inscriptions ON Cours.id = Inscriptions.cours_id 
+                LEFT JOIN Favoris ON Cours.id = Favoris.cours_id 
+                LEFT JOIN Categories ON Categories.id = Cours.categorie_id 
+                WHERE Utilisateurs.id = :id 
+                GROUP BY Cours.id;";
+```
+
+### Enrollment chart
+
+The dashboard displays a 30-day enrollment chart using Chart.js:
+
+```php
+$date = (new DateTime())->modify('-30 days')->format('Y-m-d');
+$sql_data = "SELECT DATE(Inscriptions.date_inscription) AS date, 
+                    COUNT(Inscriptions.id) AS count 
+             FROM Inscriptions 
+             INNER JOIN Cours ON Inscriptions.cours_id = Cours.id 
+             INNER JOIN Utilisateurs ON Cours.prof_id = Utilisateurs.id 
+             WHERE Utilisateurs.e_mail = :email 
+             AND Inscriptions.date_inscription >= :date 
+             GROUP BY date 
+             ORDER BY date ASC";
+```
+
+<Info>
+  The chart shows daily enrollment trends over the past 30 days to help professors track course popularity.
+</Info>
+
+## Delete course
+
+Professors can delete courses from the dashboard:
+
+```php
+if(isset($_POST["id"])){
+    $sql_delete = "DELETE FROM Cours WHERE id = :cid AND prof_id = :pid;";
+    $request_delete = $db->prepare($sql_delete);
+    $request_delete->bindParam(":cid", $_POST["id"]);
+    $request_delete->bindParam(":pid", $result['id']);
+    $request_delete->execute();
+    if ($request_delete->rowCount() > 0) {
+        $_SESSION['message'] = 'Success';
+    } else {
+        $_SESSION['message'] = 'Error';
+    }
+    header("Location: dashboard.php");
+    exit();
+}
+```
+
+## Role-based access control
+
+Only professors can access course management features:
+
+```php
+$sql = 'SELECT Utilisateurs.role FROM sessions 
+        INNER JOIN Utilisateurs ON Utilisateurs.id = sessions.user_id 
+        WHERE sessions.token = :token';
+$request = $db->prepare($sql);
+$request->bindParam(':token', $_COOKIE['user_token']);
+$request->execute();
+$result = $request->fetch(PDO::FETCH_ASSOC);
+
+if($result['role'] != 'professeur'){
+    header('Location: ../');
+    exit();
+}
+```
+
+<Warning>
+  Students and unauthenticated users are redirected when attempting to access professor-only pages.
+</Warning>
+
+## Course ownership validation
+
+The system ensures professors can only edit their own courses:
+
+```php
+$sql_check = "SELECT Cours.nom, Cours.illustration_url, Cours.description, Cours.categorie_id 
+              FROM Cours 
+              WHERE Cours.prof_id = :id AND Cours.id = :cid";
+$request_check = $db->prepare($sql_check);
+$request_check->bindParam(":id", $result['id']);
+$request_check->bindParam(":cid", $_GET['cours']);
+$request_check->execute();
+$result_check = $request_check->fetch(PDO::FETCH_ASSOC);
+
+if (!$result_check) {
+   header("Location: dashboard.php");
+   exit();
+}
+```
+
+## Database schema
+
+### Cours table
+
+```sql
+CREATE TABLE Cours (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    nom VARCHAR(255) NOT NULL,
+    illustration_url TEXT,
+    description TEXT,
+    prof_id INT NOT NULL,
+    categorie_id INT,
+    date_creation DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (prof_id) REFERENCES Utilisateurs(id) ON DELETE CASCADE,
+    FOREIGN KEY (categorie_id) REFERENCES Categories(id)
+);
+```
+
+### Chapitres table
+
+```sql
+CREATE TABLE Chapitres (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    titre VARCHAR(255) NOT NULL,
+    cours_id INT NOT NULL,
+    fichier_url TEXT,
+    FOREIGN KEY (cours_id) REFERENCES Cours(id) ON DELETE CASCADE
+);
+```

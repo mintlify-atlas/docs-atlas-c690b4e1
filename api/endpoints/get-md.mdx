@@ -1,0 +1,168 @@
+---
+title: Get markdown content
+description: Retrieve markdown content for a specific course chapter
+---
+
+## Endpoint
+
+```http
+POST /api/GetMd.php
+```
+
+Retrieve the markdown content of a specific chapter within a course. This endpoint reads the markdown file from the server's file system and returns its content.
+
+## Authentication
+
+This endpoint requires a valid authentication token. The token must be included in the request body.
+
+<Warning>
+  Invalid or expired tokens will result in a 401 Unauthorized response.
+</Warning>
+
+## Request parameters
+
+<ParamField body="token" type="string" required>
+  Authentication token obtained from login
+</ParamField>
+
+<ParamField body="cours" type="string" required>
+  The course ID that contains the chapter
+</ParamField>
+
+<ParamField body="chapter" type="string" required>
+  The chapter ID to retrieve markdown content from
+</ParamField>
+
+## Response
+
+<ResponseField name="success" type="boolean">
+  Indicates whether the request was successful
+</ResponseField>
+
+<ResponseField name="content" type="string">
+  The markdown content of the requested chapter
+</ResponseField>
+
+<ResponseField name="error" type="string">
+  Error message if the request failed
+</ResponseField>
+
+## Response codes
+
+| Code | Description |
+|------|-------------|
+| 200  | Markdown content retrieved successfully |
+| 401  | Invalid token, chapter not found, or missing parameters |
+
+## Error messages
+
+- `"Can't found this chapter"` - The specified chapter file does not exist
+- `""` - Invalid or expired authentication token
+- `"Syntax error in request. Please check the documentation and try again."` - Missing required parameters
+
+## Examples
+
+<Tabs>
+  <Tab title="cURL">
+    ```bash
+    curl -X POST https://yourdomain.com/api/GetMd.php \
+      -H "Content-Type: application/x-www-form-urlencoded" \
+      -d "token=your_auth_token_here" \
+      -d "cours=123" \
+      -d "chapter=456"
+    ```
+  </Tab>
+  
+  <Tab title="PHP">
+    ```php
+    <?php
+    $url = 'https://yourdomain.com/api/GetMd.php';
+    $data = [
+        'token' => 'your_auth_token_here',
+        'cours' => '123',
+        'chapter' => '456'
+    ];
+
+    $options = [
+        'http' => [
+            'header'  => "Content-type: application/x-www-form-urlencoded\r\n",
+            'method'  => 'POST',
+            'content' => http_build_query($data)
+        ]
+    ];
+
+    $context  = stream_context_create($options);
+    $result = file_get_contents($url, false, $context);
+    $response = json_decode($result, true);
+
+    if ($response['success']) {
+        echo $response['content'];
+    }
+    ?>
+    ```
+  </Tab>
+  
+  <Tab title="JavaScript">
+    ```javascript
+    const formData = new URLSearchParams();
+    formData.append('token', 'your_auth_token_here');
+    formData.append('cours', '123');
+    formData.append('chapter', '456');
+
+    fetch('https://yourdomain.com/api/GetMd.php', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+      if (data.success) {
+        console.log(data.content);
+      }
+    });
+    ```
+  </Tab>
+</Tabs>
+
+## Success response example
+
+```json
+{
+  "success": true,
+  "content": "# Chapter Title\n\nThis is the markdown content of the chapter...\n\n## Section 1\n\nContent here..."
+}
+```
+
+## Error response examples
+
+<Tabs>
+  <Tab title="Chapter not found">
+    ```json
+    {
+      "error": "Can't found this chapter"
+    }
+    ```
+  </Tab>
+  
+  <Tab title="Invalid token">
+    ```json
+    {
+      "error": ""
+    }
+    ```
+  </Tab>
+  
+  <Tab title="Missing parameters">
+    ```json
+    {
+      "error": "Syntax error in request. Please check the documentation and try again."
+    }
+    ```
+  </Tab>
+</Tabs>
+
+<Note>
+  The file path is constructed as `../md_files/{cours}/{chapter}.md` on the server.
+</Note>

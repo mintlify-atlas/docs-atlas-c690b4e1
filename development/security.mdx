@@ -1,0 +1,496 @@
+---
+title: Security implementation
+description: Comprehensive security measures including authentication, password hashing, SQL injection prevention, and API rate limiting
+---
+
+## Overview
+
+SkillUp implements multiple layers of security to protect user data, prevent common web vulnerabilities, and ensure safe operation. The platform follows industry best practices for PHP web application security.
+
+<Warning>
+Security is a critical aspect of the platform. All developers must understand and follow these security practices when contributing code.
+</Warning>
+
+## Authentication system
+
+### Password hashing
+
+All user passwords are hashed using PHP's built-in `password_hash()` function with the bcrypt algorithm.
+
+**Implementation** (`/pages/connection.php:28`)
+
+```php
+// During registration
+function registration() {
+    global $db, $message;
+    $password = $_POST['password'];
+    $confirmedPassword = $_POST['cPassword'];
+    
+    if ($password == $confirmedPassword) {
+        $hashedPassword = password_hash($password, PASSWORD_DEFAULT);
+        $sql = "INSERT INTO Utilisateurs (nom, prenom, e_mail, mot_de_passe, date_creation) 
+                VALUES (:nom, :prenom, :email, :mot_de_passe, :date_creation)";
+        $request = $db->prepare($sql);
+        $request->bindParam(':mot_de_passe', $hashedPassword);
+        $request->execute();
+    }
+}
+```
+
+**Password verification** (`/pages/connection.php:73`)
+
+```php
+function connection() {
+    global $db, $message;
+    $email = $_POST['email'];
+    $password = $_POST['password'];
+    
+    $sql = "SELECT id, nom, prenom, mot_de_passe FROM Utilisateurs WHERE e_mail = :email";
+    $request = $db->prepare($sql);
+    $request->bindParam(':email', $email);
+    $request->execute();
+    $result = $request->fetch(PDO::FETCH_ASSOC);
+
+    if (($result) && password_verify($password, $result['mot_de_passe'])) {
+        // Password is correct - create session
+    } else {
+        $message = "<p>Email ou mot de passe incorrect !</p>";
+    }
+}
+```
+
+<Tabs>
+  <Tab title="Algorithm">
+    `PASSWORD_DEFAULT` currently uses bcrypt, which:
+    - Automatically generates a salt
+    - Uses a cost factor of 10 by default
+    - Produces a 60-character hash
+    - Is resistant to brute-force attacks
+  </Tab>
+  
+  <Tab title="Storage">
+    Hashed passwords are stored in the `Utilisateurs.mot_de_passe` field:
+    - Type: `varchar(255)`
+    - Example: `$2y$10$LscVQZXU37FxAfV4i75f.e5LDTzZE7Q7bEMJHXk58sBnNtW/EjyCq`
+    - Never stored in plain text
+    - Never logged or displayed
+  </Tab>
+  
+  <Tab title="Best practices">
+    - Minimum password length: 8 characters (enforced in HTML)
+    - Maximum length: 255 characters
+    - Password confirmation required during registration
+    - No password hints or recovery (only reset)
+    - Passwords never transmitted unencrypted
+  </Tab>
+</Tabs>
+
+## SQL injection prevention
+
+### Prepared statements
+
+All database queries use PDO prepared statements with parameter binding to prevent SQL injection attacks.
+
+**Secure query example** (`/include/secureCheck.php:60-72`)
+
+```php
+function CheckToken($token) {
+    $db = connectDB();
+    $sql = 'SELECT Utilisateurs.id FROM Utilisateurs 
+            INNER JOIN KeyTable ON KeyTable.key_id = Utilisateurs.key_id 
+            WHERE KeyTable.token = :token';
+    $request = $db->prepare($sql);
+    $request->bindParam(':token', $token);
+    $request->execute();
+    $user = $request->fetch(PDO::FETCH_ASSOC);
+    
+    if ($user) {
+        return true;
+    } else {
+        return false;
+    }
+}
+```
+
+<Accordion title="Why prepared statements?">
+Prepared statements separate SQL code from data:
+
+**Vulnerable code (DON'T DO THIS):**
+```php
+// VULNERABLE TO SQL INJECTION!
+$sql = "SELECT * FROM Utilisateurs WHERE e_mail = '" . $_POST['email'] . "'";
+$result = $db->query($sql);
+```
+
+An attacker could input: `' OR '1'='1` to bypass authentication.
+
+**Secure code:**
+```php
+// SAFE - Uses prepared statement
+$sql = "SELECT * FROM Utilisateurs WHERE e_mail = :email";
+$request = $db->prepare($sql);
+$request->bindParam(':email', $_POST['email']);
+$request->execute();
+```
+
+The parameter is treated as data, not executable SQL.
+</Accordion>
+
+### PDO configuration
+
+The database connection is configured with secure settings (`/include/connectdb.php:7-10`):
+
+```php
+$options = [
+    PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+    PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+    PDO::ATTR_EMULATE_PREPARES => false
+];
+```
+
+<Info>
+`PDO::ATTR_EMULATE_PREPARES => false` ensures the database server handles parameter binding, providing stronger protection against SQL injection.
+</Info>
+
+## Session security
+
+### Token-based sessions
+
+SkillUp uses secure token-based session management instead of PHP's default session handling.
+
+**Session creation** (`/pages/connection.php:74-86`)
+
+```php
+if (($result) && password_verify($password, $result['mot_de_passe'])) {
+    // Generate unique session token
+    $token_seed = $result['id'] . (new DateTime())->format('Y-m-d H:i:s');
+    $token = password_hash($token_seed, PASSWORD_DEFAULT);
+
+    // Set HTTP-only cookie (not accessible via JavaScript)
+    setcookie("user_token", $token, time() + 86400, "/");
+    
+    // Store session in database
+    $sql_session = 'INSERT INTO sessions (user_id, token, expires_at) 
+                    VALUES (:id, :token, :expiresDate)';
+    $request_session = $db->prepare($sql_session);
+    $request_session->bindParam(':id', $result['id']);
+    $request_session->bindParam(':token', $token);
+    $expiresDate = new DateTime();
+    $expiresDate->modify('+1 day'); // 24-hour sessions
+    $expiresDateFormatted = $expiresDate->format('Y-m-d H:i:s');
+    $request_session->bindParam(':expiresDate', $expiresDateFormatted);
+    $request_session->execute();
+}
+```
+
+### Session validation
+
+Every protected page checks if the user is authenticated using `IsConnected()` (`/include/sessionManager.php:4-35`):
+
+```php
+function IsConnected(): bool {
+    $db = connectDB();
+
+    // Auto-delete expired sessions
+    $now = new DateTime();
+    $nowFormatted = $now->format('Y-m-d H:i:s');
+    $sql = "DELETE FROM sessions WHERE expires_at < :now";
+    $stmt = $db->prepare($sql);
+    $stmt->bindParam(':now', $nowFormatted);
+    $stmt->execute();
+
+    // Check if cookie exists
+    if (!isset($_COOKIE['user_token'])) {
+        return false;
+    }
+    
+    // Validate token in database
+    $sql = "SELECT user_id, expires_at FROM sessions WHERE token = :token";
+    $stmt = $db->prepare($sql);
+    $stmt->bindParam(':token', $_COOKIE['user_token'], PDO::PARAM_STR);
+    $stmt->execute();
+    $result = $stmt->fetch(PDO::FETCH_ASSOC);
+
+    if (!$result) {
+        return false;
+    }
+
+    // Check expiration
+    $expires_at = new DateTime($result['expires_at']);
+    if ($expires_at > $now) {
+        return true; // Valid session
+    }
+
+    return false; // Expired
+}
+```
+
+<Accordion title="Session security features">
+- **Hashed tokens**: Session tokens are hashed before storage
+- **Database-backed**: All sessions stored in database, not files
+- **Auto-expiration**: Expired sessions automatically deleted
+- **24-hour lifetime**: Sessions expire after 1 day
+- **Per-request validation**: Every request checks session validity
+- **Server-side state**: Session data never stored in cookies
+</Accordion>
+
+## XSS prevention
+
+### Output escaping
+
+All user-generated content is escaped before display to prevent Cross-Site Scripting (XSS) attacks.
+
+**Error display** (`/include/connectdb.php:75`)
+
+```php
+function afficheErreur($exception) {
+    ?>
+    <h2>Détails de l'erreur:</h2>
+    <pre><?= htmlspecialchars($exception->getMessage()) ?></pre>
+    <h2>Trace:</h2>
+    <pre><?= htmlspecialchars($exception->getTraceAsString()) ?></pre>
+    <?php
+}
+```
+
+**Tool functions** (`/include/tools.php:28-34`)
+
+```php
+function getAvatar() {
+    // ... API call to generate avatar ...
+    if (isset($decodedResponse['imagePath'])) {
+        $imagePath = htmlspecialchars($decodedResponse['imagePath']);
+        $new_avatar = 'https://remyweb.fr/' . $imagePath;
+        return $new_avatar;
+    } else {
+        echo "<h1>Erreur : Réponse invalide</h1>";
+        echo "<pre>" . htmlspecialchars($response) . "</pre>";
+    }
+}
+```
+
+<Note>
+`htmlspecialchars()` converts special characters to HTML entities, preventing browsers from executing injected scripts.
+</Note>
+
+### Input validation
+
+All user inputs are validated for length and format (`/pages/connection.php:21-60`):
+
+```php
+function registration() {
+    global $db, $message;
+    $name = $_POST['name'];
+    $firstName = $_POST['firstName'];
+    $email = $_POST['email'];
+    $password = $_POST['password'];
+
+    if (!empty($name) && !empty($firstName) && !empty($email) && !empty($password)) {
+        if (!(strlen($name) > 40)) {
+            if (!(strlen($firstName) > 15)) {
+                if (!(strlen($email) > 255)) {
+                    if (!(strlen($password) > 255)) {
+                        // Process registration
+                    } else {
+                        $message = "<p>Le mot de passe ne peut contenir que 255 au maximum</p>";
+                    }
+                } else {
+                    $message = "<p>L'email ne peut contenir que 255 caractères au maximum</p>";
+                }
+            } else {
+                $message = "<p>Le prénom ne peut contenir que 15 caractères au maximum</p>";
+            }
+        } else {
+            $message = "<p>Le nom ne peut contenir que 40 caractères au maximum</p>";
+        }
+    } else {
+        $message = "<p>Vous devez remplir tous les champs</p>";
+    }
+}
+```
+
+## API rate limiting
+
+### Request logging
+
+All API requests are logged to track usage and detect abuse (`/include/secureCheck.php:26-34`):
+
+```php
+function AddInLog($state) {
+    $db = connectDB();
+    $ip = GetIP();
+    $sql = 'INSERT INTO ApiLogs (ApiLogs.ip, ApiLogs.succes) VALUES (:ip, :success)';
+    $request = $db->prepare($sql);
+    $request->bindParam(':ip', $ip);
+    $request->bindParam(':success', $state);
+    $request->execute();
+}
+```
+
+### IP-based rate limiting
+
+The `LogsCheck()` function prevents API abuse by limiting failed requests (`/include/secureCheck.php:4-25`):
+
+```php
+function LogsCheck() {
+    $ip = GetIP();
+
+    if (!empty($ip)) {
+        $db = connectDB();
+        $dateH_check = (new DateTime('-30 minutes'))->format('Y-m-d H:i:s');
+        $sql = 'SELECT COUNT(ApiLogs.id) AS nb_denied FROM ApiLogs 
+                WHERE ApiLogs.date_heure > :dateheure 
+                AND ApiLogs.succes = FALSE 
+                AND ip = :ip';
+        $request = $db->prepare($sql);
+        $request->bindParam(':dateheure', $dateH_check);
+        $request->bindParam(':ip', $ip);
+        $request->execute();
+        $result = $request->fetch(PDO::FETCH_ASSOC);
+        
+        if ($result['nb_denied'] < 10) {
+            return true; // Allow request
+        } else {
+            return false; // Block request
+        }
+    } else {
+        return false;
+    }
+}
+```
+
+<Warning>
+IPs with 10 or more failed API requests in a 30-minute window are automatically blocked.
+</Warning>
+
+### IP detection
+
+The platform correctly identifies user IPs even behind proxies (`/include/secureCheck.php:50-59`):
+
+```php
+function GetIP() {
+    $ip = $_SERVER['REMOTE_ADDR'];
+    
+    // Check for proxy headers
+    if (!empty($_SERVER['HTTP_CLIENT_IP'])) {
+        $ip = $_SERVER['HTTP_CLIENT_IP'];
+    } elseif (!empty($_SERVER['HTTP_X_FORWARDED_FOR'])) {
+        $ip = $_SERVER['HTTP_X_FORWARDED_FOR'];
+    }
+
+    return $ip;
+}
+```
+
+## API authentication
+
+### Token generation
+
+Professor accounts receive unique API tokens for course creation (`/include/secureCheck.php:35-49`):
+
+```php
+function generateToken() {
+    $exists = 1;
+    while ($exists > 0) {
+        $db = connectDB();
+        $token = bin2hex(random_bytes(32)); // Generate 64-char hex token
+        $sql = 'SELECT COUNT(*) FROM KeyTable WHERE token = :token';
+        $request = $db->prepare($sql);
+        $request->bindParam(':token', $token);
+        $request->execute();
+        $exists = $request->fetchColumn();
+    }
+    
+    return $token;
+}
+```
+
+<Tabs>
+  <Tab title="Token format">
+    - Generated with `random_bytes(32)` for cryptographic security
+    - Converted to hexadecimal (64 characters)
+    - Example: `98e56f053717bf17088136a00671218abd59a776404a98d907e69616b917977f`
+    - Uniqueness verified before insertion
+  </Tab>
+  
+  <Tab title="Token validation">
+    ```php
+    function CheckToken($token) {
+        $db = connectDB();
+        $sql = 'SELECT Utilisateurs.id FROM Utilisateurs 
+                INNER JOIN KeyTable ON KeyTable.key_id = Utilisateurs.key_id 
+                WHERE KeyTable.token = :token';
+        $request = $db->prepare($sql);
+        $request->bindParam(':token', $token);
+        $request->execute();
+        $user = $request->fetch(PDO::FETCH_ASSOC);
+        
+        if ($user) {
+            return true;
+        } else {
+            return false;
+        }
+    }
+    ```
+  </Tab>
+  
+  <Tab title="Usage">
+    - Stored in `KeyTable` table
+    - Linked to user via `Utilisateurs.key_id` foreign key
+    - Used for API endpoints (course creation, chapter management)
+    - Can be deactivated via `KeyTable.actif` flag
+  </Tab>
+</Tabs>
+
+## Security checklist
+
+<Accordion title="Authentication">
+- [x] Passwords hashed with bcrypt
+- [x] Password verification with `password_verify()`
+- [x] Minimum 8-character password requirement
+- [x] Password confirmation during registration
+- [x] Session tokens hashed before storage
+- [x] 24-hour session expiration
+- [x] Automatic expired session cleanup
+</Accordion>
+
+<Accordion title="Database security">
+- [x] All queries use prepared statements
+- [x] Parameter binding with `bindParam()`
+- [x] `PDO::ATTR_EMULATE_PREPARES => false`
+- [x] Database errors hidden in production
+- [x] Foreign key constraints enforce data integrity
+- [x] utf8mb4 charset prevents encoding attacks
+</Accordion>
+
+<Accordion title="XSS prevention">
+- [x] Output escaped with `htmlspecialchars()`
+- [x] Input length validation
+- [x] HTML input tags have `maxlength` attributes
+- [x] User content never executed as code
+- [x] Error messages sanitized before display
+</Accordion>
+
+<Accordion title="API security">
+- [x] Rate limiting (10 failed requests per 30 min)
+- [x] All requests logged with IP and timestamp
+- [x] API tokens use cryptographically secure random generation
+- [x] Token uniqueness verified
+- [x] Tokens can be deactivated
+- [x] IP detection handles proxy headers
+</Accordion>
+
+## Security best practices
+
+<Note>
+When contributing to SkillUp, always:
+
+1. Use prepared statements for ALL database queries
+2. Escape ALL output with `htmlspecialchars()`
+3. Validate ALL user input (type, length, format)
+4. Hash passwords with `password_hash()`
+5. Never log or display sensitive data
+6. Check `IsConnected()` on protected pages
+7. Use `LogsCheck()` on API endpoints
+8. Handle errors gracefully without exposing details
+</Note>

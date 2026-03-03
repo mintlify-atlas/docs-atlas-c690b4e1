@@ -1,0 +1,513 @@
+---
+title: Session management
+description: Token-based session system with secure authentication, validation, and lifecycle management
+---
+
+## Overview
+
+SkillUp implements a custom token-based session management system that provides secure user authentication without relying on PHP's default session handling. Sessions are stored in the database with hashed tokens and automatic expiration.
+
+<Info>
+The session system is implemented in `/include/sessionManager.php` with supporting database table `sessions`.
+</Info>
+
+## Architecture
+
+The session system consists of three main components:
+
+1. **Session creation** - Generated during login with unique hashed tokens
+2. **Session validation** - Verified on each request via `IsConnected()`
+3. **Session cleanup** - Automatic expiration and deletion of old sessions
+
+### Session database schema
+
+```sql
+CREATE TABLE IF NOT EXISTS `sessions` (
+  `id` bigint UNSIGNED NOT NULL AUTO_INCREMENT,
+  `user_id` int NOT NULL,
+  `token` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `expires_at` timestamp NOT NULL DEFAULT '0000-00-00 00:00:00',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `token` (`token`),
+  KEY `user_id` (`user_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+```
+
+**Fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | bigint UNSIGNED | Unique session identifier |
+| `user_id` | int | User who owns this session |
+| `token` | varchar(255) | Hashed session token (unique) |
+| `created_at` | timestamp | When session was created |
+| `expires_at` | timestamp | When session expires (24h default) |
+
+<Note>
+The `UNIQUE KEY` constraint on `token` ensures each session token is unique across the entire database.
+</Note>
+
+## Session creation
+
+Sessions are created when a user successfully logs in. The process involves generating a unique token, storing it in the database, and setting a cookie.
+
+### Login flow
+
+Implemented in `/pages/connection.php:63-92`:
+
+```php
+function connection() {
+    global $db, $message;
+    $email = $_POST['email'];
+    $password = $_POST['password'];
+    
+    // Step 1: Retrieve user from database
+    $sql = "SELECT id, nom, prenom, mot_de_passe FROM Utilisateurs WHERE e_mail = :email";
+    $request = $db->prepare($sql);
+    $request->bindParam(':email', $email);
+    $request->execute();
+    $result = $request->fetch(PDO::FETCH_ASSOC);
+
+    // Step 2: Verify password
+    if (($result) && password_verify($password, $result['mot_de_passe'])) {
+        // Step 3: Generate unique session token
+        $token_seed = $result['id'] . (new DateTime())->format('Y-m-d H:i:s');
+        $token = password_hash($token_seed, PASSWORD_DEFAULT);
+    
+        // Step 4: Set cookie (24-hour lifetime)
+        setcookie("user_token", $token, time() + 86400, "/"); 
+        
+        // Step 5: Store session in database
+        $sql_session = 'INSERT INTO sessions (user_id, token, expires_at) 
+                        VALUES (:id, :token, :expiresDate)';
+        $request_session = $db->prepare($sql_session);
+        $request_session->bindParam(':id', $result['id']);
+        $request_session->bindParam(':token', $token);
+        
+        // Set expiration to 24 hours from now
+        $expiresDate = new DateTime();
+        $expiresDate->modify('+1 day');
+        $expiresDateFormatted = $expiresDate->format('Y-m-d H:i:s');
+        $request_session->bindParam(':expiresDate', $expiresDateFormatted);
+        $request_session->execute();
+        
+        // Step 6: Redirect to profile
+        header("Location: profile.php");
+        exit;
+    } else {
+        $message = "<p>Email ou mot de passe incorrect !</p>";
+    }
+}
+```
+
+<Tabs>
+  <Tab title="Token generation">
+    Tokens are generated using a combination of user ID and current timestamp:
+    
+    ```php
+    $token_seed = $result['id'] . (new DateTime())->format('Y-m-d H:i:s');
+    $token = password_hash($token_seed, PASSWORD_DEFAULT);
+    ```
+    
+    **Why this approach?**
+    - User ID ensures tokens are user-specific
+    - Timestamp makes each token unique (even for same user)
+    - `password_hash()` creates a cryptographically secure hash
+    - Result is a 60-character bcrypt hash
+  </Tab>
+  
+  <Tab title="Cookie settings">
+    ```php
+    setcookie("user_token", $token, time() + 86400, "/");
+    ```
+    
+    **Parameters:**
+    - `name`: "user_token"
+    - `value`: Hashed session token
+    - `expires`: Current time + 86400 seconds (24 hours)
+    - `path`: "/" (available to entire site)
+    
+    <Warning>
+    Cookies should use `httponly` and `secure` flags in production:
+    ```php
+    setcookie("user_token", $token, [
+        'expires' => time() + 86400,
+        'path' => '/',
+        'httponly' => true,  // Prevents JavaScript access
+        'secure' => true,    // HTTPS only
+        'samesite' => 'Strict' // CSRF protection
+    ]);
+    ```
+    </Warning>
+  </Tab>
+  
+  <Tab title="Database storage">
+    Sessions are stored with:
+    - `user_id`: Links session to user account
+    - `token`: Hashed token (matches cookie value)
+    - `created_at`: Auto-set to current timestamp
+    - `expires_at`: Set to 24 hours in the future
+    
+    Example session record:
+    ```
+    id: 17
+    user_id: 6
+    token: $2y$10$qsJ/aIXoEoYcVRfFYK1kU.BGmIuLkIz4q2XTbSQd.jBQt36aPrUzG
+    created_at: 2025-04-28 16:29:57
+    expires_at: 2025-04-29 14:29:57
+    ```
+  </Tab>
+</Tabs>
+
+## Session validation
+
+Every protected page checks if the user is authenticated using the `IsConnected()` function.
+
+### IsConnected() function
+
+Implemented in `/include/sessionManager.php:4-35`:
+
+```php
+function IsConnected(): bool {
+    $db = connectDB();
+
+    // Step 1: Clean up expired sessions
+    $now = new DateTime();
+    $nowFormatted = $now->format('Y-m-d H:i:s');
+
+    $sql = "DELETE FROM sessions WHERE expires_at < :now";
+    $stmt = $db->prepare($sql);
+    $stmt->bindParam(':now', $nowFormatted);
+    $stmt->execute();
+
+    // Step 2: Check if cookie exists
+    if (!isset($_COOKIE['user_token'])) {
+        return false; 
+    }
+    
+    // Step 3: Look up session in database
+    $sql = "SELECT user_id, expires_at FROM sessions WHERE token = :token";
+    $stmt = $db->prepare($sql);
+    $stmt->bindParam(':token', $_COOKIE['user_token'], PDO::PARAM_STR);
+    $stmt->execute();
+    $result = $stmt->fetch(PDO::FETCH_ASSOC);
+
+    // Step 4: Verify session exists
+    if (!$result) {
+        return false;
+    }
+
+    // Step 5: Check if session has expired
+    $expires_at = new DateTime($result['expires_at']);
+    if ($expires_at > $now) {
+        return true;  // Valid session
+    }
+
+    return false; // Expired session
+}
+```
+
+### Usage in protected pages
+
+Pages that require authentication check `IsConnected()` at the top:
+
+```php
+<?php
+session_start(); 
+require_once("../include/connectdb.php"); 
+require_once("../include/sessionManager.php");
+
+// Redirect to login if not authenticated
+if (IsConnected()) {
+    // User is logged in - continue
+} else {
+    header('Location: connection.php');
+    exit();
+}
+?>
+```
+
+**Example from `/pages/connection.php:9-12`:**
+
+```php
+if (IsConnected()) {
+    header('Location: profile.php');
+    exit();
+}
+```
+
+<Note>
+This prevents already-logged-in users from accessing the login page, redirecting them to their profile instead.
+</Note>
+
+## Session lifecycle
+
+<Accordion title="1. Session creation">
+**When:** User successfully logs in
+
+**Process:**
+1. Verify email and password
+2. Generate unique token from user ID + timestamp
+3. Hash token with bcrypt
+4. Set cookie with 24-hour lifetime
+5. Insert session into database
+6. Redirect to profile page
+
+**Database state:**
+```sql
+INSERT INTO sessions (user_id, token, expires_at) 
+VALUES (6, '$2y$10$Ift/...', '2025-04-29 16:47:14');
+```
+</Accordion>
+
+<Accordion title="2. Session validation">
+**When:** Every request to a protected page
+
+**Process:**
+1. Delete all expired sessions from database
+2. Check if `user_token` cookie exists
+3. Query database for matching token
+4. Verify session hasn't expired
+5. Return true if valid, false otherwise
+
+**SQL queries:**
+```sql
+-- Cleanup
+DELETE FROM sessions WHERE expires_at < '2025-04-28 18:47:14';
+
+-- Validation
+SELECT user_id, expires_at FROM sessions 
+WHERE token = '$2y$10$Ift/...';
+```
+</Accordion>
+
+<Accordion title="3. Session expiration">
+**When:** 24 hours after creation
+
+**Process:**
+- Sessions automatically expire based on `expires_at` timestamp
+- Expired sessions deleted on next `IsConnected()` call
+- No manual cleanup needed
+
+**Timeline:**
+```
+Created:  2025-04-28 16:47:14
+Expires:  2025-04-29 16:47:14 (24 hours later)
+Deleted:  Next IsConnected() call after expiration
+```
+</Accordion>
+
+<Accordion title="4. Session destruction">
+**When:** User logs out
+
+**Process:**
+1. Delete session from database
+2. Delete cookie from user's browser
+3. Redirect to home page
+
+**Implementation** (typical logout):
+```php
+<?php
+require_once("../include/connectdb.php");
+
+if (isset($_COOKIE['user_token'])) {
+    $db = connectDB();
+    $sql = "DELETE FROM sessions WHERE token = :token";
+    $stmt = $db->prepare($sql);
+    $stmt->bindParam(':token', $_COOKIE['user_token']);
+    $stmt->execute();
+    
+    setcookie('user_token', '', time() - 3600, '/');
+}
+
+header('Location: ../index.php');
+exit();
+?>
+```
+</Accordion>
+
+## Security features
+
+### Automatic cleanup
+
+Expired sessions are automatically deleted on every authentication check:
+
+```php
+// From IsConnected() function
+$now = new DateTime();
+$nowFormatted = $now->format('Y-m-d H:i:s');
+
+$sql = "DELETE FROM sessions WHERE expires_at < :now";
+$stmt = $db->prepare($sql);
+$stmt->bindParam(':now', $nowFormatted);
+$stmt->execute();
+```
+
+<Info>
+This ensures the `sessions` table doesn't grow indefinitely and invalid sessions can't be used.
+</Info>
+
+### Token security
+
+<Tabs>
+  <Tab title="Uniqueness">
+    - Tokens include user ID + timestamp
+    - Hashed with bcrypt for unpredictability
+    - Database enforces UNIQUE constraint
+    - Even same user gets different token each login
+  </Tab>
+  
+  <Tab title="Hashing">
+    - Tokens are hashed before storage
+    - Uses bcrypt with automatic salt
+    - 60-character hash output
+    - Cookie value matches database exactly (no decryption needed)
+  </Tab>
+  
+  <Tab title="Expiration">
+    - Every session has explicit expiration time
+    - Default: 24 hours from creation
+    - Expired sessions automatically deleted
+    - No session persistence beyond expiration
+  </Tab>
+</Tabs>
+
+### Server-side validation
+
+All session validation happens server-side:
+
+```php
+// Client cannot forge sessions because:
+// 1. Token must exist in database
+$sql = "SELECT user_id, expires_at FROM sessions WHERE token = :token";
+
+// 2. Token must not be expired
+$expires_at = new DateTime($result['expires_at']);
+if ($expires_at > $now) { /* valid */ }
+
+// 3. User cannot modify cookie and remain authenticated
+// (modified token won't match database)
+```
+
+## Best practices
+
+<Note>
+When working with sessions in SkillUp:
+
+**DO:**
+- Always check `IsConnected()` on protected pages
+- Set cookies with appropriate expiration
+- Use prepared statements for session queries
+- Clean up sessions on logout
+- Validate session expiration time
+
+**DON'T:**
+- Trust cookie values without database validation
+- Store sensitive data in cookies
+- Use PHP's default session handling (conflicts with custom system)
+- Extend session lifetime without regenerating token
+- Skip expiration checks
+</Note>
+
+## Common patterns
+
+### Protecting a page
+
+```php
+<?php
+require_once("../include/sessionManager.php");
+
+if (!IsConnected()) {
+    header('Location: connection.php');
+    exit();
+}
+
+// Page content for authenticated users
+?>
+```
+
+### Getting current user ID
+
+```php
+<?php
+if (IsConnected() && isset($_COOKIE['user_token'])) {
+    $db = connectDB();
+    $sql = "SELECT user_id FROM sessions WHERE token = :token";
+    $stmt = $db->prepare($sql);
+    $stmt->bindParam(':token', $_COOKIE['user_token']);
+    $stmt->execute();
+    $result = $stmt->fetch(PDO::FETCH_ASSOC);
+    $currentUserId = $result['user_id'];
+}
+?>
+```
+
+### Redirecting logged-in users
+
+```php
+<?php
+// On login/registration page
+if (IsConnected()) {
+    header('Location: profile.php');
+    exit();
+}
+?>
+```
+
+## Troubleshooting
+
+<Accordion title="Session not persisting">
+**Symptoms:** User logged out immediately after login
+
+**Possible causes:**
+1. Cookie not being set (check `setcookie()` before output)
+2. Cookie path incorrect (should be "/")
+3. Session expiration time too short
+4. Browser blocking cookies
+
+**Debug:**
+```php
+var_dump($_COOKIE); // Check if cookie exists
+var_dump($expiresDate->format('Y-m-d H:i:s')); // Verify expiration time
+```
+</Accordion>
+
+<Accordion title="IsConnected() always returns false">
+**Symptoms:** User can't access protected pages
+
+**Possible causes:**
+1. Cookie name mismatch
+2. Session expired
+3. Token not in database
+4. Database connection failed
+
+**Debug:**
+```php
+if (!isset($_COOKIE['user_token'])) {
+    die("No cookie");
+}
+
+$db = connectDB();
+$sql = "SELECT * FROM sessions WHERE token = :token";
+$stmt = $db->prepare($sql);
+$stmt->bindParam(':token', $_COOKIE['user_token']);
+$stmt->execute();
+var_dump($stmt->fetch()); // Should return session data
+```
+</Accordion>
+
+<Accordion title="Multiple sessions for same user">
+**Symptoms:** Old sessions remain after new login
+
+**Behavior:** This is intentional - allows multiple devices
+
+**To prevent:** Delete old sessions on new login:
+```php
+// Before creating new session
+$sql = "DELETE FROM sessions WHERE user_id = :user_id";
+$stmt = $db->prepare($sql);
+$stmt->bindParam(':user_id', $result['id']);
+$stmt->execute();
+```
+</Accordion>

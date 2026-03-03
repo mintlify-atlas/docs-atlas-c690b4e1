@@ -1,0 +1,361 @@
+---
+title: Course categories
+description: Organize and browse courses by topic categories
+---
+
+## Overview
+
+The categories system helps organize courses into topic areas, making it easier for students to discover relevant content. Categories are used throughout the platform for filtering, navigation, and course organization.
+
+## Category browsing
+
+Students can explore all available categories from the dedicated categories page.
+
+### Fetch all categories
+
+From `pages/categories.php:9-16`:
+
+```php
+$query = "SELECT * FROM categories";
+
+$stmt = $db->prepare($query);
+$stmt->execute();
+
+$categories = $stmt->fetchAll(PDO::FETCH_ASSOC);
+```
+
+### Display categories grid
+
+Categories are displayed in a responsive grid layout:
+
+```html
+<main>
+    <section class="grid-container">
+        <?php foreach ($categories as $categorie): ?>
+            <div class="category">
+                <a href="../pages/formations.php?categorie=<?php echo htmlspecialchars($categorie['id']); ?>">
+                    <h2><?php echo htmlspecialchars($categorie['nom']); ?></h2>
+                </a>
+                <p><?php echo htmlspecialchars($categorie['description']); ?></p>
+            </div>
+        <?php endforeach; ?>
+    </section>
+</main>
+```
+
+<Info>
+  Each category card is clickable and links to the formations page filtered by that category.
+</Info>
+
+## Category filtering
+
+Categories are used to filter courses on the formations page.
+
+### Category dropdown filter
+
+From `pages/formations.php:11-14`:
+
+```php
+$categoriesQuery = "SELECT id, nom FROM Categories ORDER BY nom";
+$categoriesStmt = $db->prepare($categoriesQuery);
+$categoriesStmt->execute();
+$categories = $categoriesStmt->fetchAll(PDO::FETCH_ASSOC);
+```
+
+### Filter implementation
+
+```html
+<div class="filters">
+    <form action="formations.php" method="get">
+        <?php if (!empty($recherche)): ?>
+            <input type="hidden" name="recherche" 
+                   value="<?php echo htmlspecialchars($recherche); ?>">
+        <?php endif; ?>
+        <select name="categorie" onchange="this.form.submit()">
+            <option value="">Toutes les catégories</option>
+            <?php foreach ($categories as $cat): ?>
+                <option value="<?php echo $cat['id']; ?>" 
+                        <?php echo ($categorie == $cat['id']) ? 'selected' : ''; ?>>
+                    <?php echo htmlspecialchars($cat['nom']); ?>
+                </option>
+            <?php endforeach; ?>
+        </select>
+    </form>
+</div>
+```
+
+<Note>
+  The filter preserves search terms when switching categories, providing a seamless filtering experience.
+</Note>
+
+## Categories in course management
+
+Professors assign categories when creating or editing courses.
+
+### Category selection in course editor
+
+From `pages/addCourse.php:241-244`:
+
+```php
+$sql_cat = "SELECT Categories.nom, Categories.id FROM Categories";
+$request = $db->prepare($sql_cat);
+$request->execute();
+$categories = $request->fetchAll(PDO::FETCH_ASSOC);
+```
+
+### Category dropdown in editor
+
+```html
+<select name="categorie" id="categorie">
+    <?php
+        foreach ($categories as $category) {
+            $selected = '';
+            if (!empty($result_check['categorie_id']) && 
+                $result_check['categorie_id'] == $category['id']) {
+                $selected = 'selected';
+            }
+            echo '<option value="' . $category['id'] . '" ' . $selected . '>' . 
+                 $category['nom'] . '</option>';
+        }
+    ?>
+</select>
+```
+
+### Update course category
+
+From `pages/addCourse.php:62-70`:
+
+```php
+function ChangeName($name, $cat) {
+    global $db;
+    $sql = "UPDATE Cours SET Cours.nom = :name, Cours.categorie_id = :categorie 
+            WHERE Cours.id = :id";
+    $request = $db->prepare($sql);
+    $request->bindParam(":name", $name);
+    $request->bindParam(":categorie", $cat);
+    $request->bindParam(":id", $_GET['cours']);
+    $request->execute();
+}
+```
+
+## Category display in course listings
+
+Categories are shown on course cards and detail pages to help students identify course topics.
+
+### Course card with category
+
+```html
+<div class="course-card">
+    <div class="trending-image">
+        <img src="<?php echo htmlspecialchars($row['illustration_url']); ?>" 
+             alt="Illustration de <?php echo htmlspecialchars($row['nom']); ?>">
+    </div>
+    <div class="course-content">
+        <div class="course-category">
+            <?php echo htmlspecialchars($row['categorie_nom'] ?? 'Non catégorisé'); ?>
+        </div>
+        <h2 class="course-title"><?php echo htmlspecialchars($row['nom']); ?></h2>
+        <p class="course-description">
+            <?php echo htmlspecialchars(substr($row['description'], 0, 100)) . 
+                      (strlen($row['description']) > 100 ? '...' : ''); ?>
+        </p>
+        <a href="detail.php?id=<?php echo $row['id']; ?>" class="trending-link">Voir le cours</a>
+    </div>
+</div>
+```
+
+### Course detail page category
+
+From `pages/detail.php:13-22`:
+
+```php
+$stmt_cours = $db->prepare("SELECT c.id, c.nom, c.description, c.illustration_url, c.prof_id, 
+                           u.prenom, u.nom as nom_prof, 
+                           cat.nom as categorie_nom 
+                           FROM Cours c
+                           LEFT JOIN Utilisateurs u ON c.prof_id = u.id
+                           LEFT JOIN Categories cat ON c.categorie_id = cat.id
+                           WHERE c.id = :id");
+```
+
+```html
+<div>
+    <span class="course-category">
+        <?php echo htmlspecialchars($formation['categorie_nom'] ?? 'Non catégorisé'); ?>
+    </span>
+</div>
+```
+
+## Available categories
+
+Based on the footer links in `pages/formations.php:229-244`, SkillUp offers these categories:
+
+<Accordion title="Development categories">
+  - **Développement Web** (ID: 1) - Web development courses
+  - **Développement Mobile** (ID: 7) - Mobile app development
+  - **Algorithmique** (ID: 12) - Algorithms and data structures
+</Accordion>
+
+<Accordion title="Infrastructure categories">
+  - **Base de Données** (ID: 6) - Database management and design
+  - **Cloud Computing** (ID: 10) - Cloud platforms and services
+  - **DevOps** (ID: 11) - DevOps practices and tools
+</Accordion>
+
+<Accordion title="Architecture & security">
+  - **Architecture Logicielle** (ID: 9) - Software architecture patterns
+  - **Cybersécurité** (ID: 2) - Security and ethical hacking
+</Accordion>
+
+<Accordion title="Other topics">
+  - **Sciences & Ingénierie** (ID: 13) - General science and engineering
+  - **Mes cours** (ID: 16) - Special category for enrolled courses
+</Accordion>
+
+<Info>
+  The "Mes cours" category (ID 16) is a special filter that shows only courses the logged-in student has enrolled in.
+</Info>
+
+## Database schema
+
+### Categories table
+
+```sql
+CREATE TABLE Categories (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    nom VARCHAR(100) NOT NULL,
+    description TEXT
+);
+```
+
+### Relationship to Cours table
+
+```sql
+CREATE TABLE Cours (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    nom VARCHAR(255) NOT NULL,
+    illustration_url TEXT,
+    description TEXT,
+    prof_id INT NOT NULL,
+    categorie_id INT,
+    date_creation DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (prof_id) REFERENCES Utilisateurs(id) ON DELETE CASCADE,
+    FOREIGN KEY (categorie_id) REFERENCES Categories(id)
+);
+```
+
+## Navigation integration
+
+Categories are accessible from the main navigation across all pages.
+
+### Navigation menu
+
+```html
+<nav>
+    <a href="../" class="logo" aria-label="SkillUp"></a>
+    <input type="checkbox" id="burger-toggle" class="burger-toggle">
+    <label for="burger-toggle" class="burger-menu">
+        <span></span>
+        <span></span>
+        <span></span>
+    </label>
+    <div class="nav-links">
+        <ul>
+            <li><a href="../">Accueil</a></li>
+            <li><a href="../pages/formations.php">Formations</a></li>
+            <li><a href="../pages/categories.php">Catégories</a></li>
+        </ul>
+    </div>
+</nav>
+```
+
+### Footer category links
+
+```html
+<div class="footer-col">
+    <h3>Catégories</h3>
+    <ul>
+        <li><a href="../pages/formations.php?categorie=12">Algorithmique</a></li>
+        <li><a href="../pages/formations.php?categorie=9">Architecture Logicielle</a></li>
+        <li><a href="../pages/formations.php?categorie=6">Base de Données</a></li>
+        <li><a href="../pages/formations.php?categorie=10">Cloud Computing</a></li>
+    </ul>
+</div>
+<div class="footer-col">
+    <ul>
+        <li><a href="../pages/formations.php?categorie=2">Cybersécurité</a></li>
+        <li><a href="../pages/formations.php?categorie=7">Développement Mobile</a></li>
+        <li><a href="../pages/formations.php?categorie=1">Développement Web</a></li>
+        <li><a href="../pages/formations.php?categorie=11">DevOps</a></li>
+        <li><a href="../pages/formations.php?categorie=13">Sciences & Ingénierie</a></li>
+    </ul>
+</div>
+```
+
+## Category filtering workflow
+
+<Steps>
+  <Step title="User selects category">
+    From the categories page, dropdown filter, or footer links.
+  </Step>
+  
+  <Step title="Query with filter">
+    The formations page receives the category ID as a GET parameter.
+  </Step>
+  
+  <Step title="Database filtering">
+    SQL query filters courses WHERE categorie_id matches the selected category.
+  </Step>
+  
+  <Step title="Display results">
+    Only courses in the selected category are shown in the grid.
+  </Step>
+  
+  <Step title="Maintain filter">
+    Selected category remains highlighted in the dropdown for user context.
+  </Step>
+</Steps>
+
+## Handling uncategorized courses
+
+Courses without an assigned category are handled gracefully:
+
+```php
+echo htmlspecialchars($row['categorie_nom'] ?? 'Non catégorisé');
+```
+
+<Note>
+  The `??` null coalescing operator displays "Non catégorisé" when a course has no category assigned.
+</Note>
+
+## Best practices
+
+<Accordion title="For professors">
+  - Always assign a category to your courses
+  - Choose the most specific category that applies
+  - Update category if course content changes significantly
+  - Use categories to help students find your courses
+</Accordion>
+
+<Accordion title="For platform administrators">
+  - Keep category names clear and concise
+  - Provide descriptive text for each category
+  - Avoid creating too many similar categories
+  - Monitor which categories are most popular
+  - Consider adding new categories based on course submissions
+</Accordion>
+
+## Future enhancements
+
+Potential improvements to the category system:
+
+- **Hierarchical categories**: Parent/child category relationships
+- **Multiple categories**: Allow courses to belong to multiple categories
+- **Category icons**: Visual representation for each category
+- **Popular categories**: Sort by number of courses or enrollments
+- **Category subscriptions**: Notify users when new courses are added to favorite categories
+- **Tag system**: Complement categories with flexible tags
+
+<Warning>
+  Adding new categories requires database insertion and may need updates to footer navigation and other hardcoded category lists.
+</Warning>

@@ -1,0 +1,300 @@
+---
+title: System architecture
+description: Comprehensive overview of the SkillUp platform architecture and design patterns
+---
+
+## Overview
+
+SkillUp is an online learning platform built with PHP, MySQL, and a modular architecture that separates concerns into distinct directories. The platform follows a simplified MVC-like pattern with clear separation between API endpoints, business logic, presentation layers, and static assets.
+
+## Directory structure
+
+The platform is organized into four main directories:
+
+<Tabs>
+  <Tab title="/api">
+    Contains REST API endpoints for AJAX requests and external integrations.
+    
+    **Key endpoints:**
+    - `CreateAccount.php` - User registration
+    - `NewCours.php` - Course creation
+    - `NewChapter.php` - Chapter management
+    - `SaveMd.php` - Markdown content storage
+    - `GetMd.php` - Content retrieval
+    - `UploadImage.php` - Image handling
+    - `CleanImg.php` - Image cleanup
+
+    All API endpoints return JSON responses and implement rate limiting via `LogsCheck()`.
+  </Tab>
+  
+  <Tab title="/assets">
+    Stores static resources and database schema.
+    
+    **Structure:**
+    - `/css` - Stylesheets
+    - `/js` - JavaScript files
+    - `/images` - Platform images
+    - `/sql` - Database schema (`skillup.sql`)
+    
+    <Info>
+    The SQL file contains the complete database structure with all tables, indexes, and foreign key constraints.
+    </Info>
+  </Tab>
+  
+  <Tab title="/include">
+    Houses reusable PHP modules and utilities.
+    
+    **Core modules:**
+    - `connectdb.php` - Database connection handler
+    - `sessionManager.php` - Session management
+    - `secureCheck.php` - Security validators
+    - `tools.php` - Utility functions
+    - `stats.php` - Statistics generation
+    - `config.php` - Configuration constants
+  </Tab>
+  
+  <Tab title="/pages">
+    Contains user-facing PHP pages.
+    
+    **Main pages:**
+    - `connection.php` - Login/registration
+    - `profile.php` - User profile
+    - `formations.php` - Course listing
+    - `detail.php` - Course details
+    - `course_viewer.php` - Course content viewer
+    - `categories.php` - Category browser
+    - `dashboard.php` - Admin dashboard
+    - `addCourse.php` - Course creation
+    - `logout.php` - Session termination
+  </Tab>
+</Tabs>
+
+## MVC-like pattern
+
+While not strictly following MVC, SkillUp implements a similar separation:
+
+### Model layer
+
+Database interactions are handled through PDO in `/include/connectdb.php`:
+
+```php
+function connectDB() {
+    try {
+        $dsn = "mysql:host=" . DB_HOST . ";port=" . DB_PORT . ";dbname=" . DB_NAME . ";charset=utf8mb4";
+        $options = [
+            PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+            PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+            PDO::ATTR_EMULATE_PREPARES => false
+        ];
+        
+        return new PDO($dsn, DB_USER, DB_PASS, $options);
+    } catch (PDOException $e) {
+        // Error handling
+    }
+}
+```
+
+<Note>
+All database queries use prepared statements with parameter binding to prevent SQL injection.
+</Note>
+
+### Controller layer
+
+API endpoints and page controllers handle business logic:
+
+**Example: User authentication** (`/pages/connection.php:63-92`)
+
+```php
+function connection() {
+    global $db, $message;
+    $email = $_POST['email'];
+    $password = $_POST['password'];
+    $sql = "SELECT id, nom, prenom, mot_de_passe FROM Utilisateurs WHERE e_mail = :email";
+    $request = $db->prepare($sql);
+    $request->bindParam(':email', $email);
+    $request->execute();
+    $result = $request->fetch(PDO::FETCH_ASSOC);
+
+    if (($result) && password_verify($password, $result['mot_de_passe'])) {
+        $token_seed = $result['id'] . (new DateTime())->format('Y-m-d H:i:s');
+        $token = password_hash($token_seed, PASSWORD_DEFAULT);
+    
+        setcookie("user_token", $token, time() + 86400, "/"); 
+        $sql_session = 'INSERT INTO sessions (user_id, token, expires_at) VALUES (:id, :token, :expiresDate)';
+        // ... session creation
+        header("Location: profile.php");
+        exit;
+    }
+}
+```
+
+### View layer
+
+Pages in `/pages` combine PHP and HTML for presentation:
+
+```php
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <link rel="stylesheet" type="text/css" href="../<?php echo CSS_PATH; ?>/jossua.css">
+    <title><?php echo $titre; ?></title>
+</head>
+<body>
+    <?php if ($message): ?>
+        <div class="message"><?php echo $message; ?></div>
+    <?php endif; ?>
+</body>
+</html>
+```
+
+## Component interaction flow
+
+<Accordion title="User registration flow">
+1. User submits registration form on `/pages/connection.php`
+2. Form data is validated (length checks, password match)
+3. Password is hashed using `password_hash()` with `PASSWORD_DEFAULT`
+4. User data is inserted into `Utilisateurs` table via prepared statement
+5. Session is created and cookie is set
+6. User is redirected to profile page
+</Accordion>
+
+<Accordion title="Course viewing flow">
+1. User browses courses on `/pages/formations.php`
+2. Clicks on course → redirected to `/pages/detail.php?id={course_id}`
+3. Detail page fetches course info from `Cours` table
+4. Chapters are loaded from `Chapitres` table with foreign key relationship
+5. User enrollment status checked via `Inscriptions` table
+6. View is logged to `Vues` table for analytics
+</Accordion>
+
+<Accordion title="API request flow">
+1. JavaScript makes AJAX request to `/api/{endpoint}.php`
+2. API checks rate limiting via `LogsCheck()` in `/include/secureCheck.php:4-25`
+3. Request is validated and sanitized
+4. Database operation is performed using prepared statements
+5. Result is logged to `ApiLogs` table
+6. JSON response is returned with appropriate HTTP status code
+</Accordion>
+
+## Database connection
+
+All database operations use a centralized connection function with error handling:
+
+```php
+// From /include/connectdb.php:4-22
+function connectDB() {
+    try {
+        $dsn = "mysql:host=" . DB_HOST . ";port=" . DB_PORT . ";dbname=" . DB_NAME . ";charset=utf8mb4";
+        $options = [
+            PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+            PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+            PDO::ATTR_EMULATE_PREPARES => false
+        ];
+        
+        return new PDO($dsn, DB_USER, DB_PASS, $options);
+    } catch (PDOException $e) {
+        if (DEBUG) {
+            afficheErreur($e);
+        } else {
+            echo "<p>Une erreur est survenue lors de la connexion aux données.</p>";
+        }
+        exit;
+    }
+}
+```
+
+<Warning>
+The platform disables prepared statement emulation (`PDO::ATTR_EMULATE_PREPARES => false`) for enhanced security.
+</Warning>
+
+## Utility functions
+
+The `/include/tools.php` module provides reusable utilities:
+
+```php
+// Avatar generation using external API
+function getAvatar() {
+    global $new_avatar;
+    if (!isset($_POST['prompt']) || empty($_POST['prompt'])) {
+        return null;
+    }
+    $prompt = $_POST['prompt'];
+    $url = "https://remyweb.fr/emoji.php";
+    $data = ['prompt' => $prompt];
+    // ... cURL request to external service
+}
+
+// Get professor ID from API token
+function GetProfId($token) {
+    $db = connectDB();
+    $sql = 'SELECT Utilisateurs.id FROM Utilisateurs 
+            INNER JOIN KeyTable ON KeyTable.key_id = Utilisateurs.key_id 
+            WHERE KeyTable.token = :token';
+    $request = $db->prepare($sql);
+    $request->bindParam(':token', $token);
+    $request->execute();
+    $user = $request->fetch(PDO::FETCH_ASSOC);
+    return $user['id'] ?? false;
+}
+```
+
+## Statistics module
+
+The `/include/stats.php` provides analytics functions:
+
+```php
+// Get platform statistics
+function getStats() {
+    $db = connectDB();
+    $stats = ['utilisateurs' => 0, 'cours' => 0, 'profs' => 0];
+    
+    $sql = "SELECT COUNT(*) as total FROM Utilisateurs";
+    $query = $db->query($sql);
+    $stats['utilisateurs'] = $query->fetch(PDO::FETCH_ASSOC)['total'];
+    
+    // ... similar queries for courses and professors
+    return $stats;
+}
+
+// Get trending courses
+function getTrendingCourses($limit = 4) {
+    $db = connectDB();
+    $sql = "SELECT c.id, c.nom, c.illustration_url, c.description, cat.nom as categorie_nom, 
+            COUNT(i.id) as nombre_inscrits
+            FROM Cours c
+            LEFT JOIN Inscriptions i ON c.id = i.cours_id
+            LEFT JOIN Categories cat ON c.categorie_id = cat.id
+            GROUP BY c.id
+            ORDER BY nombre_inscrits DESC, c.date_creation DESC
+            LIMIT :limit";
+    // ...
+}
+```
+
+## Best practices implemented
+
+<Accordion title="Security">
+- All user inputs are validated and sanitized
+- Prepared statements prevent SQL injection
+- Passwords are hashed with `password_hash()`
+- Sessions use secure token-based authentication
+- API rate limiting prevents abuse
+- XSS prevention via `htmlspecialchars()`
+</Accordion>
+
+<Accordion title="Code organization">
+- Separation of concerns (pages, API, includes)
+- Reusable functions in dedicated modules
+- Centralized database connection
+- Configuration via constants
+- Error handling with debug mode
+</Accordion>
+
+<Accordion title="Database design">
+- Foreign key constraints maintain referential integrity
+- Indexed columns for query optimization
+- TIMESTAMP fields for audit trails
+- CASCADE operations for data consistency
+- Character set utf8mb4 for full Unicode support
+</Accordion>

@@ -1,0 +1,340 @@
+---
+title: User authentication
+description: Secure user registration, login, and session management system
+---
+
+## Overview
+
+SkillUp provides a robust authentication system that handles user registration, login, and session management using PHP and PDO. The system implements password hashing, token-based sessions, and automatic session expiry.
+
+## User registration workflow
+
+The registration process validates user input, hashes passwords securely, and stores user data in the database.
+
+<Steps>
+  <Step title="User submits registration form">
+    The user fills out the registration form with name, first name, email, password, and password confirmation.
+  </Step>
+  
+  <Step title="Server validates input">
+    The system validates field lengths and ensures passwords match before processing.
+  </Step>
+  
+  <Step title="Password hashing">
+    Passwords are securely hashed using PHP's `password_hash()` function with the default algorithm.
+  </Step>
+  
+  <Step title="Database insertion">
+    User data is inserted into the Utilisateurs table with the creation timestamp.
+  </Step>
+</Steps>
+
+### Registration implementation
+
+The registration function from `pages/connection.php:13-61` handles the complete registration flow:
+
+```php
+function registration() {
+    global $db, $message;
+    $name = $_POST['name'];
+    $firstName = $_POST['firstName'];
+    $email = $_POST['email'];
+    $password = $_POST['password'];
+    $confirmedPassword = $_POST['cPassword'];
+
+    if(!empty($name) && !empty($firstName) && !empty($email) && 
+       !empty($password) && !empty($confirmedPassword)) {
+        // Validate field lengths
+        if (!(strlen($name) > 40)) {
+            if(!(strlen($firstName) > 15)){
+                if(!(strlen($email) > 255)){
+                    if(!(strlen($password) > 255)){
+                        if ($password == $confirmedPassword) {
+                            $currentDateTime = date('Y-m-d H:i:s');
+                            $hashedPassword = password_hash($password, PASSWORD_DEFAULT);
+                            
+                            $sql = "INSERT INTO Utilisateurs (nom, prenom, e_mail, mot_de_passe, date_creation) 
+                                    VALUES (:nom, :prenom, :email, :mot_de_passe, :date_creation)";
+                            $request = $db->prepare($sql);
+                            $request->bindParam(':nom', $name);
+                            $request->bindParam(':prenom', $firstName);
+                            $request->bindParam(':email', $email);
+                            $request->bindParam(':mot_de_passe', $hashedPassword);
+                            $request->bindParam(':date_creation', $currentDateTime);
+                            $request->execute();
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+```
+
+<Info>
+  All passwords are hashed using `PASSWORD_DEFAULT`, which automatically uses the strongest algorithm available in the PHP version.
+</Info>
+
+## User login workflow
+
+The login system authenticates users and creates secure session tokens.
+
+<Steps>
+  <Step title="User submits credentials">
+    The user enters their email and password on the login form.
+  </Step>
+  
+  <Step title="Database lookup">
+    The system queries the database for the user record matching the email.
+  </Step>
+  
+  <Step title="Password verification">
+    The submitted password is verified against the hashed password using `password_verify()`.
+  </Step>
+  
+  <Step title="Token generation">
+    A unique session token is generated and hashed for security.
+  </Step>
+  
+  <Step title="Session creation">
+    The token is stored in the sessions table with a 24-hour expiry time.
+  </Step>
+  
+  <Step title="Cookie set">
+    The token is sent to the user's browser as a cookie.
+  </Step>
+</Steps>
+
+### Login implementation
+
+The connection function from `pages/connection.php:63-92` implements the login logic:
+
+```php
+function connection() {
+    global $db, $message;
+    $email = $_POST['email'];
+    $password = $_POST['password'];
+    
+    $sql = "SELECT id, nom, prenom, mot_de_passe FROM Utilisateurs WHERE e_mail = :email";
+    $request = $db->prepare($sql);
+    $request->bindParam(':email', $email);
+    $request->execute();
+    $result = $request->fetch(PDO::FETCH_ASSOC);
+
+    if (($result) && password_verify($password, $result['mot_de_passe'])) {
+        // Generate unique token
+        $token_seed = $result['id'] . (new DateTime())->format('Y-m-d H:i:s');
+        $token = password_hash($token_seed, PASSWORD_DEFAULT);
+    
+        // Set cookie for 24 hours
+        setcookie("user_token", $token, time() + 86400, "/"); 
+        
+        // Store session in database
+        $sql_session = 'INSERT INTO sessions (user_id, token, expires_at) 
+                        VALUES (:id, :token, :expiresDate)';
+        $request_session = $db->prepare($sql_session);
+        $request_session->bindParam(':id', $result['id']);
+        $request_session->bindParam(':token', $token);
+        
+        $expiresDate = new DateTime();
+        $expiresDate->modify('+1 day');
+        $expiresDateFormatted = $expiresDate->format('Y-m-d H:i:s');
+        $request_session->bindParam(':expiresDate', $expiresDateFormatted);
+        $request_session->execute();
+        
+        header("Location: profile.php");
+        exit;
+    } else {
+        $message = "<p>Email ou mot de passe incorrect !</p>";
+    }
+}
+```
+
+<Warning>
+  Failed login attempts display a generic error message to prevent user enumeration attacks.
+</Warning>
+
+## Session management
+
+SkillUp uses a custom session management system that validates tokens and automatically cleans up expired sessions.
+
+### Session validation
+
+The `IsConnected()` function from `include/sessionManager.php:4-35` checks if a user has a valid session:
+
+```php
+function IsConnected(): bool {
+    $db = connectDB();
+
+    // Delete expired sessions
+    $now = new DateTime();
+    $nowFormatted = $now->format('Y-m-d H:i:s');
+
+    $sql = "DELETE FROM sessions WHERE expires_at < :now";
+    $stmt = $db->prepare($sql);
+    $stmt->bindParam(':now', $nowFormatted);
+    $stmt->execute();
+
+    if (!isset($_COOKIE['user_token'])) {
+        return false; 
+    }
+    
+    $sql = "SELECT user_id, expires_at FROM sessions WHERE token = :token";
+    $stmt = $db->prepare($sql);
+    $stmt->bindParam(':token', $_COOKIE['user_token'], PDO::PARAM_STR);
+    $stmt->execute();
+    $result = $stmt->fetch(PDO::FETCH_ASSOC);
+
+    if (!$result) {
+        return false;
+    }
+
+    $expires_at = new DateTime($result['expires_at']);
+    if ($expires_at > $now) {
+        return true;  
+    }
+
+    return false; 
+}
+```
+
+### Protecting routes
+
+Protected pages use the session check to redirect unauthorized users:
+
+```php
+session_start();
+require_once("../include/sessionManager.php");
+
+if(!IsConnected()){
+    header('Location: connection.php');
+    exit();
+}
+```
+
+## UI components
+
+### Toggle between login and registration
+
+The authentication page features a toggle mechanism allowing users to switch between login and registration forms:
+
+<Tabs>
+  <Tab title="Login form">
+    ```html
+    <form id="login-form" class="isSelected" method="POST" action="connection.php">
+        <label for="email">Email</label>
+        <input type="email" id="email" maxlength="255" name="email" required>
+        <label for="password">Mot de passe</label>
+        <input type="password" id="password" maxlength="255" name="password" required/>
+        <button type="submit" name="connectionForm">Connexion</button>
+    </form>
+    ```
+  </Tab>
+  
+  <Tab title="Registration form">
+    ```html
+    <form id="register-form" method="POST">
+        <div class="mini-inputs">
+            <div class="input-group">
+                <label for="name">Nom</label>
+                <input type="text" class="little-input" id="name" name="name" maxlength="40" required/>
+            </div>
+            <div class="input-group">
+                <label for="firstName">Prénom</label>
+                <input type="text" class="little-input" name="firstName" maxlength="15" required/>
+            </div>
+        </div>
+        <label for="email">Email</label>
+        <input type="email" id="email" maxlength="255" name="email" required>
+        <label for="password">Mot de passe</label>
+        <input type="password" id="password" minlength="8" maxlength="255" name="password" required/>
+        <label for="check-pass">Confirmation</label>
+        <input type="password" id="check-pass" minlength="8" maxlength="255" name="cPassword" required/>
+        <button type="submit" name="registrationForm">Inscription</button>
+    </form>
+    ```
+  </Tab>
+</Tabs>
+
+## Input validation
+
+The system enforces the following validation rules:
+
+| Field | Max Length | Min Length | Required |
+|-------|-----------|------------|----------|
+| Name (nom) | 40 characters | - | Yes |
+| First Name (prénom) | 15 characters | - | Yes |
+| Email | 255 characters | - | Yes |
+| Password | 255 characters | 8 characters | Yes |
+
+<Note>
+  Client-side validation is enforced using HTML5 attributes, while server-side validation provides additional security.
+</Note>
+
+## Security best practices
+
+<Accordion title="Password security">
+  - Passwords are hashed using `password_hash()` with `PASSWORD_DEFAULT`
+  - Never store passwords in plain text
+  - Use `password_verify()` for authentication, never compare hashes directly
+  - Minimum password length of 8 characters enforced
+</Accordion>
+
+<Accordion title="Session security">
+  - Sessions expire after 24 hours automatically
+  - Expired sessions are cleaned up on each authentication check
+  - Tokens are hashed before storage
+  - Session cookies are httpOnly by default in modern PHP versions
+</Accordion>
+
+<Accordion title="SQL injection prevention">
+  - All database queries use prepared statements
+  - User input is bound to parameters, not concatenated
+  - PDO parameter binding provides automatic escaping
+</Accordion>
+
+## Database schema
+
+The authentication system relies on two primary tables:
+
+### Utilisateurs table
+
+```sql
+CREATE TABLE Utilisateurs (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    nom VARCHAR(40) NOT NULL,
+    prenom VARCHAR(15) NOT NULL,
+    e_mail VARCHAR(255) UNIQUE NOT NULL,
+    mot_de_passe VARCHAR(255) NOT NULL,
+    date_creation DATETIME NOT NULL,
+    role VARCHAR(20) DEFAULT 'etudiant',
+    avatar_url TEXT,
+    admin BOOLEAN DEFAULT FALSE,
+    key_id INT
+);
+```
+
+### Sessions table
+
+```sql
+CREATE TABLE sessions (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    user_id INT NOT NULL,
+    token VARCHAR(255) UNIQUE NOT NULL,
+    expires_at DATETIME NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES Utilisateurs(id)
+);
+```
+
+## Error handling
+
+The system provides user-friendly error messages for various scenarios:
+
+- Empty required fields: "Vous devez remplir tout les champs"
+- Password mismatch: "Les mots de passes ne correspondent pas"
+- Field length violations: Specific messages for each field
+- Invalid credentials: "Email ou mot de passe incorrect !"
+
+<Info>
+  Error messages are displayed in French to match the target audience of the SkillUp platform.
+</Info>
