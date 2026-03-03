@@ -1,0 +1,103 @@
+{
+  "projectType": "saas",
+  "projectName": "SkillUp",
+  "projectDescription": "An online learning platform for students to discover and enroll in courses across multiple disciplines",
+  "theme": "almond",
+  "primaryColor": "#A042F0",
+  "lightColor": "#B87FF5",
+  "darkColor": "#8A35D1",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Overview",
+            "pages": [
+              "introduction",
+              "features",
+              "installation"
+            ]
+          },
+          {
+            "group": "Getting Started",
+            "pages": [
+              "getting-started/setup",
+              "getting-started/database-configuration",
+              "getting-started/deployment"
+            ]
+          },
+          {
+            "group": "Core Features",
+            "pages": [
+              "features/user-authentication",
+              "features/course-management",
+              "features/student-enrollment",
+              "features/admin-dashboard",
+              "features/categories"
+            ]
+          },
+          {
+            "group": "User Roles",
+            "pages": [
+              "roles/students",
+              "roles/teachers",
+              "roles/administrators"
+            ]
+          },
+          {
+            "group": "Development",
+            "pages": [
+              "development/architecture",
+              "development/database-schema",
+              "development/security",
+              "development/session-management"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Getting Started",
+            "pages": [
+              "api/overview",
+              "api/authentication"
+            ]
+          },
+          {
+            "group": "Endpoints",
+            "pages": [
+              "api/endpoints/get-md",
+              "api/endpoints/save-md",
+              "api/endpoints/new-course",
+              "api/endpoints/new-chapter",
+              "api/endpoints/upload-image",
+              "api/endpoints/clean-img"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "User authentication with role-based access control (students, teachers, administrators)",
+    "Course catalog with 15+ categories including Web Development, Cybersecurity, and AI",
+    "Markdown-based course content creation and management",
+    "Student enrollment and progress tracking",
+    "Admin dashboard for managing teacher requests and platform statistics",
+    "RESTful API for programmatic course content management",
+    "Profile management with avatar support",
+    "Course search and filtering by category"
+  ],
+  "publicApiSurface": [
+    "GetMd.php - Retrieve markdown content for a specific chapter",
+    "SaveMd.php - Save markdown content for a chapter",
+    "NewCours.php - Create a new course",
+    "NewChapter.php - Add a new chapter to a course",
+    "UploadImage.php - Upload images for course content",
+    "CleanImg.php - Remove unused images",
+    "CreateAccount.php - Create new user accounts (disabled in production)"
+  ]
+}
